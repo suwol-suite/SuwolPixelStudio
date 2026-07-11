@@ -63,7 +63,6 @@ import {
   type IndexedConversionOptions,
 } from "@suwol/editor-core";
 import type { PluginImportResult } from "@suwol/plugin-api";
-import { PluginToolStrokeBroker } from "@suwol/plugin-host";
 import {
   createThumbnailPng,
   decodePng,
@@ -71,7 +70,6 @@ import {
   encodePng,
   exportPng,
   importPng,
-  importAseprite,
   exportTilemapJson,
   type CompatibilityReport,
   serializeSuwolPixelAsync,
@@ -99,16 +97,17 @@ import {
   serializeKeybindingSettings,
   uiScaleSchema,
   type AppSettings,
+  type AppDiagnostics,
   type FileHandle,
   type LanguageMode,
   type PanelId,
   type RecoverySnapshotInfo,
-  type SupportedPlatform,
   type ThemeMode,
   type UiScale,
 } from "@suwol/shared";
 import { AboutDialog } from "./components/AboutDialog";
 import { CloseDocumentDialog } from "./components/CloseDocumentDialog";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import { CommandPalette } from "./components/CommandPalette";
 import { DurationDialog } from "./components/DurationDialog";
 import { EditorShell } from "./components/EditorShell";
@@ -120,6 +119,7 @@ import { ProgressDialog } from "./components/ProgressDialog";
 import { PluginManager } from "./components/PluginManager";
 import { TagDialog, type TagDialogResult } from "./components/TagDialog";
 import type { AnimationExportJob } from "./workers/animation-export.worker";
+import type { AsepriteWorkerResult } from "./workers/aseprite-import.worker";
 import {
   ResizeDialog,
   type ResizeDialogResult,
@@ -201,7 +201,7 @@ export function App() {
     [durationOpen, setDurationOpen] = useState(false),
     [onionSettingsOpen, setOnionSettingsOpen] = useState(false),
     [jobProgress, setJobProgress] = useState<{
-      readonly kind: "export" | "resize" | "indexed";
+      readonly kind: "export" | "resize" | "indexed" | "aseprite";
       readonly completed: number;
       readonly total: number;
     } | null>(null),
@@ -210,18 +210,19 @@ export function App() {
     >([]),
     [recoveryOpen, setRecoveryOpen] = useState(false);
   const [pluginManagerOpen, setPluginManagerOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<
+    "clear-recovery" | "disable-plugins" | "reset-keybindings" | "reset-preferences" | null
+  >(null);
   const [indexedConversionOpen, setIndexedConversionOpen] = useState(false),
     [layoutManagerOpen, setLayoutManagerOpen] = useState(false),
     [keybindingEditorOpen, setKeybindingEditorOpen] = useState(false);
   const [brushManagerOpen, setBrushManagerOpen] = useState(false);
   const [compatibilityReport, setCompatibilityReport] = useState<CompatibilityReport | null>(null);
-  const [desktopInfo, setDesktopInfo] = useState<{
-    version: string;
-    platform: SupportedPlatform | "unknown";
-  }>({ version: "0.5.0", platform: "unknown" });
+  const [desktopInfo, setDesktopInfo] = useState<AppDiagnostics | null>(null);
   const exportWorkerRef = useRef<Worker | null>(null),
     resizeWorkerRef = useRef<Worker | null>(null),
-    indexedWorkerRef = useRef<Worker | null>(null);
+    indexedWorkerRef = useRef<Worker | null>(null),
+    asepriteWorkerRef = useRef<Worker | null>(null);
   const language = resolveLanguage(settings.language, navigator.languages),
     t = useMemo(() => createTranslator(language), [language]),
     tRef = useRef(t);
@@ -407,7 +408,7 @@ export function App() {
     try {
       const bytes = await serializeSuwolPixelAsync(
         snapshot,
-        desktopInfo.version,
+        desktopInfo?.version ?? "0.6.0",
       );
       await api.files.writeAtomic(handle, toArrayBuffer(bytes));
       entry.session.markSaved(revision);
@@ -430,12 +431,16 @@ export function App() {
     try {
       const result = await api.files.showOpenDialog({ kind: "document" });
       if (result.canceled) return;
-      const bytes = new Uint8Array(await api.files.read(result.handle)),
-        lower = result.handle.displayName.toLocaleLowerCase("en-US"),
-        aseprite = lower.endsWith(".ase") || lower.endsWith(".aseprite")
-          ? importAseprite(bytes, { name: result.handle.displayName.replace(/\.(?:ase|aseprite)$/i, "") })
-          : null;
-      if (aseprite !== null) setCompatibilityReport(aseprite.report);
+      const buffer = await api.files.read(result.handle),
+        bytes = new Uint8Array(buffer),
+        lower = result.handle.displayName.toLocaleLowerCase("en-US");
+      if (lower.endsWith(".ase") || lower.endsWith(".aseprite")) {
+        startAsepriteImport(
+          result.handle.displayName.replace(/\.(?:ase|aseprite)$/i, ""),
+          buffer,
+        );
+        return;
+      }
       const entry = lower.endsWith(".png")
         ? workspace.add(
             importPng(
@@ -446,13 +451,7 @@ export function App() {
             "png",
             result.handle,
           )
-        : aseprite !== null
-          ? workspace.add(
-              EditorSession.fromSnapshot(aseprite.snapshot),
-              "aseprite",
-              null,
-            )
-          : workspace.add(
+        : workspace.add(
               EditorSession.fromSnapshot(deserializeSuwolPixel(bytes)),
               "suwolpixel",
               result.handle,
@@ -509,8 +508,53 @@ export function App() {
   }
   async function importAsepriteDocument(): Promise<void> {
     const api = window.suwolDesktop; if (api === undefined) return;
-    try { const result = await api.files.showOpenDialog({ kind: "aseprite" }); if (result.canceled) return; const bytes = new Uint8Array(await api.files.read(result.handle)), imported = importAseprite(bytes, { name: result.handle.displayName.replace(/\.(?:ase|aseprite)$/i, "") }); workspace.add(EditorSession.fromSnapshot(imported.snapshot), "aseprite", null); setCompatibilityReport(imported.report); }
-    catch { setMessage(tRef.current("error.fileOpen")); }
+    try {
+      const selected = await api.files.showOpenDialog({ kind: "aseprite" });
+      if (selected.canceled) return;
+      startAsepriteImport(
+        selected.handle.displayName.replace(/\.(?:ase|aseprite)$/i, ""),
+        await api.files.read(selected.handle),
+      );
+    } catch { setMessage(tRef.current("error.fileOpen")); }
+  }
+  function startAsepriteImport(name: string, bytes: ArrayBuffer): void {
+    const jobId = crypto.randomUUID(),
+      worker = new Worker(new URL("./workers/aseprite-import.worker.ts", import.meta.url), { type: "module" });
+    asepriteWorkerRef.current?.terminate();
+    asepriteWorkerRef.current = worker;
+    setJobProgress({ kind: "aseprite", completed: 0, total: 1 });
+    const fail = () => {
+      worker.terminate();
+      if (asepriteWorkerRef.current === worker) asepriteWorkerRef.current = null;
+      setJobProgress(null);
+      setMessage(tRef.current("error.fileOpen"));
+    };
+    worker.onerror = fail;
+    worker.onmessage = (event: MessageEvent<Readonly<{
+      type: "progress" | "result" | "error";
+      jobId: string;
+      completed?: number;
+      total?: number;
+      result?: AsepriteWorkerResult;
+    }>>) => {
+      if (event.data.jobId !== jobId) return;
+      if (event.data.type === "progress") {
+        setJobProgress({ kind: "aseprite", completed: event.data.completed ?? 0, total: event.data.total ?? 1 });
+        return;
+      }
+      if (event.data.type !== "result" || event.data.result === undefined) { fail(); return; }
+      const result = event.data.result;
+      worker.terminate();
+      if (asepriteWorkerRef.current === worker) asepriteWorkerRef.current = null;
+      setJobProgress(null);
+      workspace.add(EditorSession.fromSnapshot({
+        model: result.model,
+        images: new Map(result.images.map(([id, buffer]) => [id, new Uint8Array(buffer)])),
+        tilemaps: new Map(result.tilemaps.map(([id, buffer]) => [id, new Uint32Array(buffer)])),
+      }), "aseprite", null);
+      setCompatibilityReport(result.report);
+    };
+    worker.postMessage({ type: "start", jobId, name, bytes }, [bytes]);
   }
   async function importPalette(): Promise<void> {
     const entry = workspace.active, api = window.suwolDesktop; if (entry === null || api === undefined) return;
@@ -559,20 +603,17 @@ export function App() {
     });
     await api.files.writeExportBatch(destination.handle, result.files.map((file) => ({ relativePath: file.relativePath, data: file.data })));
   }
-  async function runPluginTool(pluginId: string, toolId: string): Promise<void> {
+  function selectPluginTool(pluginId: string, toolId: string): Promise<void> {
     const entry = workspace.active;
     if (entry === null) throw new Error("An active document is required.");
     const layer = entry.session.model.layers[entry.view.activeLayerId];
     if (layer?.kind !== "pixel") throw new Error("Plugin tools require an active Pixel Layer.");
-    const strokeId = crypto.randomUUID(), broker = new PluginToolStrokeBroker(entry.session, pluginId),
-      point = { x: Math.floor(entry.session.model.canvas.width / 2), y: Math.floor(entry.session.model.canvas.height / 2), pressure: 1 };
-    broker.begin(strokeId, layer.id);
-    try {
-      const operations = await pluginController.runToolEvent(pluginId, toolId, { type: "pointerMove", strokeId, points: [point] });
-      for (const operation of operations) broker.append(strokeId, operation);
-      broker.commit(strokeId);
-      workspace.invalidateCanvas(entry.id);
-    } catch (error) { broker.cancel(strokeId); throw error; }
+    entry.view.pluginTool = { pluginId, toolId };
+    workspace.touch();
+    return Promise.resolve();
+  }
+  async function runPluginToolEvent(pluginId: string, toolId: string, event: unknown) {
+    return await pluginController.runToolEvent(pluginId, toolId, event);
   }
   function transformBrushPresetSetting(id: string, transform: "rotate" | "flipX" | "flipY"): void {
     setSettings((current) => normalizeSettings({ ...current, brushPresets: current.brushPresets.map((preset) => {
@@ -584,6 +625,7 @@ export function App() {
   function requestClose(id: string): void {
     const entry = workspace.documents.find((item) => item.id === id);
     if (entry === undefined) return;
+    if (workspace.activeId === id && jobProgress !== null) cancelBackgroundJob();
     if (entry.session.isDirty) setCloseId(id);
     else {
       workspace.close(id);
@@ -594,6 +636,7 @@ export function App() {
     const entry = workspace.active;
     if (entry !== null) {
       entry.view.activeTool = tool;
+      entry.view.pluginTool = null;
       workspace.touch();
     }
   }
@@ -996,6 +1039,8 @@ export function App() {
     resizeWorkerRef.current = null;
     indexedWorkerRef.current?.terminate();
     indexedWorkerRef.current = null;
+    asepriteWorkerRef.current?.terminate();
+    asepriteWorkerRef.current = null;
     setJobProgress(null);
   }
 
@@ -1919,6 +1964,8 @@ export function App() {
       { id: "preferences.keybindings", titleKey: "command.preferences.keybindings", category: "category.preferences", canExecute: () => true, execute: () => setKeybindingEditorOpen(true) },
       { id: "preferences.importKeybindings", titleKey: "command.preferences.importKeybindings", category: "category.preferences", canExecute: () => true, execute: importKeybindingSettings },
       { id: "preferences.exportKeybindings", titleKey: "command.preferences.exportKeybindings", category: "category.preferences", canExecute: () => true, execute: exportKeybindingSettings },
+      { id: "preferences.resetKeybindings", titleKey: "command.preferences.resetKeybindings", category: "category.preferences", canExecute: () => true, execute: () => setConfirmAction("reset-keybindings") },
+      { id: "preferences.resetAll", titleKey: "command.preferences.resetAll", category: "category.preferences", canExecute: () => true, execute: () => setConfirmAction("reset-preferences") },
       {
         id: "recovery.open",
         titleKey: "command.recovery.open",
@@ -1938,7 +1985,7 @@ export function App() {
         titleKey: "command.recovery.deleteAll",
         category: "category.file",
         canExecute: () => recoveryItems.length > 0,
-        execute: deleteAllRecovery,
+        execute: () => setConfirmAction("clear-recovery"),
       },
       {
         id: "plugin.manage",
@@ -1976,6 +2023,13 @@ export function App() {
           await pluginController.refresh();
         },
       })),
+      {
+        id: "plugin.disableAll",
+        titleKey: "command.plugin.disableAll",
+        category: "category.plugins",
+        canExecute: () => pluginController.snapshot.installed.some((plugin) => plugin.enabled),
+        execute: () => setConfirmAction("disable-plugins"),
+      },
       {
         id: "plugin.remove",
         titleKey: "command.plugin.remove",
@@ -2077,6 +2131,15 @@ export function App() {
     }
     commands.notifyStateChanged();
   }, [commands, language, settings, workspaceVersion]);
+  useEffect(
+    () => () => {
+      exportWorkerRef.current?.terminate();
+      resizeWorkerRef.current?.terminate();
+      indexedWorkerRef.current?.terminate();
+      asepriteWorkerRef.current?.terminate();
+    },
+    [],
+  );
   useEffect(() => {
     const api = window.suwolDesktop;
     if (api === undefined) return;
@@ -2088,7 +2151,7 @@ export function App() {
   useEffect(() => {
     const api = window.suwolDesktop;
     if (api === undefined) {
-      setMessage(t("error.desktopApi"));
+      setMessage(tRef.current("error.desktopApi"));
       return;
     }
     const unsubscribe = api.commands.onInvoke((id) => {
@@ -2097,13 +2160,17 @@ export function App() {
     const unsubscribePlugin = api.plugins.onCommandInvoke((id) => {
       void commands.execute(id);
     });
-    void Promise.all([api.app.getVersion(), api.app.getPlatform()])
-      .then(([version, platform]) => setDesktopInfo({ version, platform }))
-      .catch(() => setMessage(t("error.desktopApi")));
+    void api.app.getDiagnostics()
+      .then(setDesktopInfo)
+      .catch(() => setMessage(tRef.current("error.desktopApi")));
     void refreshRecovery();
     void pluginController.refresh();
-    return () => { unsubscribe(); unsubscribePlugin(); };
-  }, [commands, pluginController, t]);
+    return () => {
+      unsubscribe();
+      unsubscribePlugin();
+      void pluginController.dispose();
+    };
+  }, [commands, pluginController]);
   useEffect(() => {
     const dirty = workspace.documents.filter(
       (entry) =>
@@ -2117,7 +2184,7 @@ export function App() {
       for (const entry of dirty) {
         const snapshot = entry.session.snapshot(),
           revision = snapshot.model.revision;
-        void serializeSuwolPixelAsync(snapshot, desktopInfo.version)
+        void serializeSuwolPixelAsync(snapshot, desktopInfo?.version ?? "0.6.0")
           .then(async (data) => {
             let thumbnail: ArrayBuffer | undefined;
             try {
@@ -2144,7 +2211,7 @@ export function App() {
       }
     }, 1500);
     return () => clearTimeout(timer);
-  }, [desktopInfo.version, workspace, workspaceVersion]);
+  }, [desktopInfo?.version, workspace, workspaceVersion]);
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) return;
@@ -2358,7 +2425,8 @@ export function App() {
         onCloseDocument={requestClose}
         pluginOverlays={pluginController.snapshot.overlays.map((entry) => entry.update)}
         pluginTools={pluginController.snapshot.tools}
-        onPluginTool={runPluginTool}
+        onPluginTool={selectPluginTool}
+        onPluginToolEvent={runPluginToolEvent}
       />
       {paletteOpen && (
         <CommandPalette
@@ -2370,8 +2438,28 @@ export function App() {
       {aboutOpen && (
         <AboutDialog
           t={t}
-          version={desktopInfo.version}
-          platform={desktopInfo.platform}
+          diagnostics={desktopInfo}
+          onOpenRepository={() => {
+            void window.suwolDesktop?.shell.openExternal(
+              "https://github.com/suwol-suite/SuwolPixelStudio",
+            );
+          }}
+          onOpenLicense={() => {
+            void window.suwolDesktop?.shell.openExternal(
+              "https://www.apache.org/licenses/LICENSE-2.0",
+            );
+          }}
+          onOpenNotices={() => {
+            void window.suwolDesktop?.shell.openExternal(
+              "https://github.com/suwol-suite/SuwolPixelStudio/blob/main/THIRD_PARTY_NOTICES.md",
+            );
+          }}
+          onOpenLogs={() => {
+            void window.suwolDesktop?.app.openLogsFolder();
+          }}
+          onCopyDiagnostics={() => {
+            void window.suwolDesktop?.app.copyDiagnostics();
+          }}
           onClose={() => setAboutOpen(false)}
         />
       )}{" "}
@@ -2569,7 +2657,7 @@ export function App() {
       )}{" "}
       {jobProgress !== null && (
         <ProgressDialog
-          title={t(jobProgress.kind === "export" ? "export.progress" : jobProgress.kind === "indexed" ? "indexed.progress" : "resize.progress")}
+          title={t(jobProgress.kind === "export" ? "export.progress" : jobProgress.kind === "indexed" ? "indexed.progress" : jobProgress.kind === "aseprite" ? "aseprite.progress" : "resize.progress")}
           completed={jobProgress.completed}
           total={jobProgress.total}
           t={t}
@@ -2588,7 +2676,8 @@ export function App() {
             void deleteRecovery(item);
           }}
           onDeleteAll={() => {
-            void deleteAllRecovery();
+            setRecoveryOpen(false);
+            setConfirmAction("clear-recovery");
           }}
           onClose={() => setRecoveryOpen(false)}
         />
@@ -2599,12 +2688,42 @@ export function App() {
           t={t}
           onRunImporter={runPluginImporter}
           onRunExporter={runPluginExporter}
-          onRunTool={runPluginTool}
+          onRunTool={selectPluginTool}
           onClose={() => setPluginManagerOpen(false)}
         />
       )}
       {compatibilityReport !== null && (
         <AsepriteCompatibilityDialog t={t} report={compatibilityReport} onClose={() => setCompatibilityReport(null)} />
+      )}
+      {confirmAction !== null && (
+        <ConfirmDialog
+          t={t}
+          title={t(`confirm.${confirmAction}.title`)}
+          message={t(`confirm.${confirmAction}.message`)}
+          onClose={() => setConfirmAction(null)}
+          onConfirm={() => {
+            const action = confirmAction;
+            setConfirmAction(null);
+            if (action === "clear-recovery") {
+              void deleteAllRecovery();
+            } else if (action === "disable-plugins") {
+              void (async () => {
+                for (const plugin of pluginController.snapshot.installed)
+                  if (plugin.enabled)
+                    await window.suwolDesktop?.plugins.setEnabled(plugin.manifest.id, false);
+                await pluginController.refresh();
+              })();
+            } else if (action === "reset-keybindings") {
+              setSettings((current) => normalizeSettings({
+                ...current,
+                keybindings: DEFAULT_SETTINGS.keybindings,
+              }));
+            } else {
+              panels.reset();
+              setSettings(DEFAULT_SETTINGS);
+            }
+          }}
+        />
       )}
     </>
   );

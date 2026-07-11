@@ -66,7 +66,7 @@ async function waitForWorkspace(
   page.on("console", (message) => {
     if (message.type() === "error") console.error("renderer console error", message.text());
   });
-  await page.waitForURL("suwol-pixel://app/index.html");
+  await page.waitForURL(/^suwol-pixel:\/\/app\/index\.html(?:\?.*)?$/);
   await expect(page.getByTestId("workspace-shell")).toBeVisible({
     timeout: 15_000,
   });
@@ -86,6 +86,48 @@ async function artifactBytes(page: Page, fileName: string): Promise<Uint8Array |
   return values === null ? null : Uint8Array.from(values);
 }
 
+function minimalAseprite(): Uint8Array {
+  const layerPayload = new BinaryWriter(32);
+  layerPayload.u16(1); layerPayload.u16(0); layerPayload.u16(0);
+  layerPayload.skip(4); layerPayload.u16(0); layerPayload.u8(255);
+  layerPayload.skip(3); layerPayload.string("Layer");
+  const celPayload = new BinaryWriter(32);
+  celPayload.u16(0); celPayload.i16(0); celPayload.i16(0); celPayload.u8(255);
+  celPayload.u16(0); celPayload.skip(7); celPayload.u16(1); celPayload.u16(1);
+  celPayload.bytes(Uint8Array.from([12, 34, 56, 255]));
+  const chunk = (type: number, payload: Uint8Array) => {
+    const writer = new BinaryWriter(payload.length + 6);
+    writer.u32(payload.length + 6); writer.u16(type); writer.bytes(payload);
+    return writer.output;
+  };
+  const chunks = [chunk(0x2004, layerPayload.used), chunk(0x2005, celPayload.used)],
+    frameSize = 16 + chunks.reduce((sum, value) => sum + value.length, 0),
+    frame = new BinaryWriter(frameSize);
+  frame.u32(frameSize); frame.u16(0xf1fa); frame.u16(chunks.length);
+  frame.u16(100); frame.u16(0); frame.u32(chunks.length);
+  for (const value of chunks) frame.bytes(value);
+  const output = new Uint8Array(128 + frameSize), view = new DataView(output.buffer);
+  view.setUint32(0, output.length, true); view.setUint16(4, 0xa5e0, true);
+  view.setUint16(6, 1, true); view.setUint16(8, 1, true); view.setUint16(10, 1, true);
+  view.setUint16(12, 32, true); output.set(frame.output, 128);
+  return output;
+}
+
+class BinaryWriter {
+  readonly output: Uint8Array;
+  readonly #view: DataView;
+  offset = 0;
+  constructor(size: number) { this.output = new Uint8Array(size); this.#view = new DataView(this.output.buffer); }
+  get used(): Uint8Array { return this.output.slice(0, this.offset); }
+  u8(value: number): void { this.output[this.offset++] = value; }
+  u16(value: number): void { this.#view.setUint16(this.offset, value, true); this.offset += 2; }
+  i16(value: number): void { this.#view.setInt16(this.offset, value, true); this.offset += 2; }
+  u32(value: number): void { this.#view.setUint32(this.offset, value, true); this.offset += 4; }
+  skip(length: number): void { this.offset += length; }
+  bytes(value: Uint8Array): void { this.output.set(value, this.offset); this.offset += value.length; }
+  string(value: string): void { const bytes = new TextEncoder().encode(value); this.u16(bytes.length); this.bytes(bytes); }
+}
+
 async function configurePluginPackage(page: Page, packagePath: string): Promise<void> {
   const bytes = [...fs.readFileSync(packagePath)];
   await page.evaluate(async ({ fileName, values }) => {
@@ -102,8 +144,9 @@ async function installConfiguredPlugin(page: Page, packagePath: string): Promise
   await page.getByRole("button", { name: "Install Plugin…" }).first().click();
   const review = page.locator(".plugin-install-review");
   await expect(review).toBeVisible();
-  for (const checkbox of await review.locator('input[type="checkbox"]').all())
-    await checkbox.check();
+  const checkboxes = review.locator('input[type="checkbox"]');
+  for (let index = 0; index < await checkboxes.count(); index += 1)
+    await checkboxes.nth(index).check();
   await review.getByRole("button", { name: "Install Plugin…" }).click();
   await expect(review).toBeHidden();
 }
@@ -141,7 +184,13 @@ test("packaged M2 editor tools, transforms, palette, round-trip and recovery", a
       test: Object.keys(window.suwolDesktop?.test ?? {}),
     }));
     expect(apiShape).toEqual({
-      app: ["getVersion", "getPlatform"],
+      app: [
+        "getVersion",
+        "getPlatform",
+        "getDiagnostics",
+        "openLogsFolder",
+        "copyDiagnostics",
+      ],
       shell: ["openExternal"],
       commands: ["onInvoke", "updateState"],
       files: [
@@ -776,12 +825,67 @@ test("packaged M5 indexed document, Group tree, v4 archive and Plugin API 1.1 sa
     const beforeTool = await page.evaluate(() => window.suwolTest?.getActiveDocumentHash());
     await runButtons.nth(2).click();
     await expect(page.locator(".plugin-error")).toHaveCount(0);
-    await expect.poll(async () => await page.evaluate(() => window.suwolTest?.getActiveDocumentHash())).not.toBe(beforeTool);
     await page.getByRole("dialog", { name: "Plugin Manager" }).getByRole("button", { name: "Close" }).click();
+    const toolPoint = await pixel(page, 0, 0);
+    await page.mouse.move(toolPoint.x, toolPoint.y);
+    await page.mouse.down();
+    await page.mouse.move(toolPoint.x + 1, toolPoint.y + 1);
+    await page.mouse.up();
+    await expect.poll(async () => await page.evaluate(() => window.suwolTest?.getActiveDocumentHash())).not.toBe(beforeTool);
     await page.evaluate(async () => window.suwolTest?.executeCommand("sprite.convertToIndexed"));
     const conversionDialog = page.getByRole("dialog", { name: "Convert to Indexed Color" });
     await conversionDialog.getByRole("button", { name: "Convert" }).click();
     await expect.poll(async () => await page.evaluate(() => window.suwolTest?.getProfessionalState()?.colorMode)).toBe("indexed");
+  } finally {
+    await app.close();
+  }
+});
+
+test("packaged M6 Canvas2D, diagnostics, localization and keyboard accessibility", async () => {
+  const executablePath = findExecutable(path.resolve("out"));
+  expect(executablePath, "packaged Electron executable").not.toBeNull();
+  if (executablePath === null) throw new Error("Packaged executable was not found.");
+  const userData = path.resolve("out", "e2e-m6-user-data");
+  fs.rmSync(userData, { recursive: true, force: true });
+  const app = await electron.launch({
+    executablePath,
+    args: [`--user-data-dir=${userData}`, "--force-canvas2d"],
+  });
+  try {
+    const page = await waitForWorkspace(app);
+    await page.getByLabel(/Language|언어/).selectOption("en");
+    await page.getByTestId("empty-new").click();
+    await page.getByTestId("create-document").click();
+    await expect(page.getByTestId("pixel-canvas")).toHaveAttribute("data-renderer-mode", "canvas2d");
+    await page.evaluate(async () => window.suwolTest?.executeCommand("help.about"));
+    const about = page.getByRole("dialog", { name: "About Suwol Pixel Studio" });
+    await expect(about).toContainText("0.6.0");
+    await expect(about).toContainText("Plugin API 1.1.0");
+    await expect(about).toContainText("Apache-2.0");
+    const aboutIcon = about.locator(".about-mark img");
+    await expect(aboutIcon).toBeVisible();
+    expect(await aboutIcon.evaluate((image: HTMLImageElement) => ({ width: image.naturalWidth, height: image.naturalHeight }))).toEqual({ width: 512, height: 512 });
+    await about.press("Tab");
+    expect(await page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null)).toBe(true);
+    await about.getByRole("button", { name: "Close" }).last().click();
+    await page.getByLabel("UI scale").selectOption("2");
+    await expect(page.locator("html")).toHaveCSS("font-size", "28px");
+    await page.getByLabel("Language").selectOption("ko");
+    await expect(page.getByLabel("언어")).toHaveValue("ko");
+    await page.getByLabel("테마").selectOption("light");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    const aseprite = minimalAseprite();
+    await page.evaluate(async (values) => {
+      const bytes = Uint8Array.from(values);
+      await window.suwolDesktop?.test?.configureDialog({
+        operation: "open",
+        fileName: "m6-worker.ase",
+        data: bytes.buffer,
+      });
+      await window.suwolTest?.executeCommand("file.importAseprite");
+    }, [...aseprite]);
+    await expect(page.getByRole("dialog", { name: /Aseprite/ })).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => window.suwolTest?.getCanvasSize())).toEqual({ width: 1, height: 1 });
   } finally {
     await app.close();
   }

@@ -1,8 +1,14 @@
 # Suwol Pixel Studio
 
-Suwol Pixel Studio is a byte-exact desktop pixel editor built with Electron, React, and TypeScript. The current implementation is **v0.5.0 / M5 — Professional Editing**.
+Suwol Pixel Studio is a byte-exact desktop pixel editor built with Electron, React, and TypeScript. The current implementation is **v0.6.0 / M6 — 1.0 Release Readiness**.
 
-## M5 highlights
+## M6 focus
+
+- File-format v4, recovery, plugin sandbox, renderer resource, accessibility, and localization regression hardening
+- Reproducible Windows, macOS, and Linux packaging workflows with checksums and explicit signing policy
+- Release, user-guide, Plugin SDK, license, and third-party notice documentation for repeatable release candidates
+
+## M5 editing highlights
 
 - RGBA and indexed-color documents with deterministic Exact, Median Cut, and K-means quantization; None, Floyd–Steinberg, and Bayer 4×4 dithering
 - Stable palette-slot semantics, lossless palette reorder/remap, GPL/JASC/HEX/JSON interchange, usage analysis, duplicate merge, and unused-color removal
@@ -29,12 +35,15 @@ pnpm test:e2e
 pnpm benchmark
 pnpm plugin:validate
 pnpm plugin:pack
+pnpm license:check
 pnpm audit --prod
 pnpm package
+pnpm package:smoke
+pnpm workflow:check
 pnpm make
 ```
 
-`pnpm make` is intentionally configured for unsigned Windows ZIP output only. It does not generate Setup.exe or NUPKG artifacts.
+`pnpm make` emits only the makers supported by the current host: unsigned ZIP on Windows, ZIP and AppImage on Linux, and ZIP/DMG on macOS. Windows never generates Setup.exe, Squirrel, NUPKG, or MSI artifacts. Release workflows additionally run `release:prepare`, `release:validate`, and `release:checksums` under an exact version-tag contract.
 
 ## Architecture
 
@@ -54,8 +63,12 @@ tests/e2e/             packaged Electron scenarios
 
 The renderer has no Node integration. Files cross a typed preload boundary as opaque handles and validated byte buffers; raw paths and generic raw IPC are not exposed. Plugins run without Node, direct filesystem, host DOM/GPU, or unrestricted network access. Importer/exporter/tool/overlay results are schema-validated and budgeted by the host.
 
-Plugins remain unsigned in M5, so installation displays an explicit warning. The release workflow produces only an unsigned Windows ZIP until a future signing policy is introduced.
+Plugins remain unsigned, so installation displays an explicit warning. Windows distribution remains an unsigned ZIP. Linux checksums are GPG-signed, and macOS release artifacts require Developer ID signing, notarization, and stapling before upload.
 
 ## Scope
 
-M5 does not include collaboration, AI generation, marketplace/signing infrastructure, scripting languages, vector editing, or external-engine-specific tilemap exporters.
+M6 does not add collaboration, AI generation, marketplace/plugin signing infrastructure, scripting languages, vector editing, or external-engine-specific tilemap exporters.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).

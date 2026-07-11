@@ -36,6 +36,7 @@ export type ToolId =
 export interface DocumentViewState {
   viewport: Viewport;
   activeTool: ToolId;
+  pluginTool: Readonly<{ pluginId: string; toolId: string }> | null;
   activeLayerId: LayerId;
   foreground: Rgba;
   background: Rgba;
@@ -129,6 +130,23 @@ export class WorkspaceStore {
     sourceKind: WorkspaceDocument["sourceKind"] = "new",
     handle: FileHandle | null = null,
   ): WorkspaceDocument {
+    const existing = this.#documents.get(session.model.id);
+    if (existing !== undefined) {
+      let kept = false;
+      for (let index = 0; index < this.#order.length; index += 1) {
+        if (this.#order[index] !== existing.id) continue;
+        if (!kept) kept = true;
+        else {
+          this.#order.splice(index, 1);
+          index -= 1;
+        }
+      }
+      this.#activeId = existing.id;
+      this.touch();
+      return existing;
+    }
+    for (let index = this.#order.length - 1; index >= 0; index -= 1)
+      if (this.#order[index] === session.model.id) this.#order.splice(index, 1);
     const firstLayer =
       session.model.layerOrder[session.model.layerOrder.length - 1];
     if (firstLayer === undefined) throw new Error("Document has no layer.");
@@ -150,6 +168,7 @@ export class WorkspaceStore {
           session.model.canvas.height,
         ),
         activeTool: "pencil",
+        pluginTool: null,
         activeLayerId: firstLayer,
         foreground: [0, 0, 0, 255],
         background: [255, 255, 255, 255],

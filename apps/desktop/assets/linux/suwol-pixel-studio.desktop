@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Suwol Pixel Studio
+Comment=Create and animate byte-exact pixel art
+Exec=SuwolPixelStudio %F
+Icon=studio.suwol.pixel
+Terminal=false
+Categories=Graphics;2DGraphics;RasterGraphics;
+MimeType=application/x-suwol-pixel-studio;image/png;
+StartupWMClass=SuwolPixelStudio

@@ -1,6 +1,8 @@
 import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, shell } from "electron";
+import { promises as fs } from "node:fs";
 import {
   IPC_CHANNELS,
+  appDiagnosticsSchema,
   clipboardPngRequestSchema,
   commandStateSchema,
   parseExternalHttpsUrl,
@@ -18,6 +20,7 @@ import {
   pluginMenuCommandSchema,
   testPluginPackageRequestSchema,
   type IpcResult,
+  type AppDiagnostics,
   type Logger,
   type SupportedPlatform,
 } from "@suwol/shared";
@@ -57,6 +60,58 @@ export function registerIpcHandlers(
     return platform.success
       ? success<SupportedPlatform>(platform.data)
       : internalError<SupportedPlatform>(logger, "app.getPlatform");
+  });
+
+  function diagnostics(): AppDiagnostics {
+    return appDiagnosticsSchema.parse({
+      productName: "Suwol Pixel Studio",
+      version: app.getVersion(),
+      electron: process.versions.electron,
+      chromium: process.versions.chrome,
+      node: process.versions.node,
+      platform: process.platform,
+      architecture: process.arch,
+      fileFormatVersion: 4,
+      pluginApiVersion: "1.1.0",
+      license: "Apache-2.0",
+      repository: "https://github.com/suwol-suite/SuwolPixelStudio",
+    });
+  }
+  ipcMain.handle(IPC_CHANNELS.appGetDiagnostics, () => {
+    try {
+      return success(diagnostics());
+    } catch {
+      return internalError<AppDiagnostics>(logger, "app.getDiagnostics");
+    }
+  });
+  ipcMain.handle(IPC_CHANNELS.appOpenLogsFolder, async () => {
+    try {
+      const logs = app.getPath("logs");
+      await fs.mkdir(logs, { recursive: true });
+      const result = await shell.openPath(logs);
+      return result === ""
+        ? success(null)
+        : internalError<null>(logger, "app.openLogsFolder");
+    } catch {
+      return internalError<null>(logger, "app.openLogsFolder");
+    }
+  });
+  ipcMain.handle(IPC_CHANNELS.appCopyDiagnostics, () => {
+    try {
+      const info = diagnostics();
+      clipboard.writeText(
+        [
+          `${info.productName} ${info.version}`,
+          `Electron ${info.electron} / Chromium ${info.chromium} / Node ${info.node}`,
+          `${info.platform} ${info.architecture}`,
+          `File format v${info.fileFormatVersion} / Plugin API ${info.pluginApiVersion}`,
+          `License ${info.license}`,
+        ].join("\n"),
+      );
+      return success(null);
+    } catch {
+      return internalError<null>(logger, "app.copyDiagnostics");
+    }
   });
 
   ipcMain.handle(

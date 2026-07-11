@@ -64,6 +64,32 @@ export function validateOverlayUpdate(input: unknown, canvas: Readonly<{ width: 
   return { ...parsed.data, primitives };
 }
 
+function defaultOverlayUpdatesPerSecond(): number {
+  return PLUGIN_LIMITS.overlayUpdatesPerSecond;
+}
+function defaultOverlayWindowMs(): number {
+  return 1_000;
+}
+
+/** Enforces the host-side overlay update budget independently of plugin code. */
+export class PluginOverlayUpdateGate {
+  readonly #timestamps: number[] = [];
+  constructor(
+    readonly maximum = defaultOverlayUpdatesPerSecond(),
+    readonly windowMs = defaultOverlayWindowMs(),
+  ) {}
+  enter(now = Date.now()): void {
+    while ((this.#timestamps[0] ?? now) <= now - this.windowMs)
+      this.#timestamps.shift();
+    if (this.#timestamps.length >= this.maximum)
+      throw new PluginError("RATE_LIMITED", "Plugin overlay update rate exceeded.");
+    this.#timestamps.push(now);
+  }
+  clear(): void {
+    this.#timestamps.length = 0;
+  }
+}
+
 interface ActiveToolStroke { readonly id: string; readonly layerId: LayerId; readonly revision: number; readonly startedAt: number; readonly operations: PluginToolOperation[]; pixels: number; }
 
 /** Buffers declarative operations; the document changes only when commit succeeds. */

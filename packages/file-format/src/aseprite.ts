@@ -117,7 +117,7 @@ export function importAseprite(bytes: Uint8Array, options: AsepriteImportOptions
           if (key === 0) slices.push({ id: makeId("slice"), name, bounds: { x, y, width: sliceWidth, height: sliceHeight }, ...(center === undefined ? {} : { center: { x: x + center.x, y: y + center.y, width: center.width, height: center.height } }), ...(pivot === undefined ? {} : { pivot: { x: x + pivot.x, y: y + pivot.y } }) });
           else ignored.add("Additional frame-specific slice keys");
         }
-      } else if (type === CHUNK_TILESET) unsupported.add("Aseprite TileSet chunks are reported but not imported in M5 alpha.");
+      } else if (type === CHUNK_TILESET) unsupported.add("Aseprite TileSet chunks are reported but are not imported.");
       else if (type === CHUNK_USER_DATA) ignored.add("User Data not attached to a supported object");
       else ignored.add(`0x${type.toString(16).padStart(4, "0")}`);
       reader.seek(chunkEnd);

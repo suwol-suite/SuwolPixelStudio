@@ -22,8 +22,8 @@ export function IndexedConversionDialog({ t, onClose, onApply }: CommonProps & R
         <label>{t("indexed.transparentIndex")}<input type="number" min="0" max="255" value={transparentIndex} onChange={(event) => setTransparentIndex(Number(event.target.value))} /></label>
       </div>
       <label>{t("indexed.alphaThreshold")}<input type="range" min="0" max="255" value={alphaThreshold} onChange={(event) => setAlphaThreshold(Number(event.target.value))} /> {alphaThreshold}</label>
-      <label>{t("indexed.quantization")}<select value={quantization} onChange={(event) => setQuantization(event.target.value as QuantizationMethod)}><option value="exact">Exact Palette</option><option value="median-cut">{t("indexed.medianCut")}</option><option value="k-means">Deterministic K-Means</option></select></label>
-      <label>{t("indexed.dithering")}<select value={dithering} onChange={(event) => setDithering(event.target.value as DitheringMethod)}><option value="none">None</option><option value="floyd-steinberg">{t("indexed.floydSteinberg")}</option><option value="ordered-bayer-4x4">{t("indexed.ordered")}</option></select></label>
+      <label>{t("indexed.quantization")}<select value={quantization} onChange={(event) => setQuantization(event.target.value as QuantizationMethod)}><option value="exact">{t("indexed.exactPalette")}</option><option value="median-cut">{t("indexed.medianCut")}</option><option value="k-means">{t("indexed.deterministicKMeans")}</option></select></label>
+      <label>{t("indexed.dithering")}<select value={dithering} onChange={(event) => setDithering(event.target.value as DitheringMethod)}><option value="none">{t("indexed.none")}</option><option value="floyd-steinberg">{t("indexed.floydSteinberg")}</option><option value="ordered-bayer-4x4">{t("indexed.ordered")}</option></select></label>
       <p className="form-hint">{t("indexed.partialAlphaPolicy")}</p>
       <footer><button type="button" onClick={onClose}>{t("action.cancel")}</button><button type="submit" disabled={!valid}>{t("indexed.convert")}</button></footer>
     </form>

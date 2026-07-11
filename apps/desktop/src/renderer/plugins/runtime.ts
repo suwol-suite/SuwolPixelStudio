@@ -22,6 +22,7 @@ import {
   PluginRequestGate,
   withTimeout,
   validateOverlayUpdate,
+  PluginOverlayUpdateGate,
   validatePluginExportResult,
   validatePluginImportResult,
   type PluginHostDocument,
@@ -60,6 +61,7 @@ interface RuntimeRecord {
   readonly executions: Map<string, Readonly<{ resolve(): void; reject(error: Error): void }>>;
   readonly providerExecutions: Map<string, Readonly<{ resolve(value: unknown): void; reject(error: Error): void }>>;
   readonly panelPorts: Map<string, MessagePort>;
+  readonly overlayGate: PluginOverlayUpdateGate;
   ready: boolean;
 }
 
@@ -73,7 +75,13 @@ export class PluginRuntimeController {
   readonly #runtimes = new Map<string, RuntimeRecord>();
   readonly #listeners = new Set<Listener>();
   readonly #progress = new Map<string, PluginProgressState>();
-  readonly #overlays = new Map<string, Readonly<{ pluginId: string; update: OverlayUpdate; updatedAt: number }>>();
+  readonly #overlays = new Map<string, Readonly<{
+    pluginId: string;
+    update: OverlayUpdate;
+    updatedAt: number;
+    documentId: string | null;
+    frameId: string | null;
+  }>>();
   readonly #runtimeErrors = new Map<string, Readonly<{ code: string; timestamp: number }>>();
   readonly #starting = new Set<string>();
   #installed: readonly InstalledPluginInfo[] = [];
@@ -81,6 +89,20 @@ export class PluginRuntimeController {
   #version = 0;
   #selectedPluginId: string | null = null;
   #lastNotice: PluginRuntimeSnapshot["lastNotice"] = null;
+  #listening = false;
+  readonly #onWindowMessage = (event: MessageEvent<unknown>): void => {
+    if (typeof event.data !== "object" || event.data === null) return;
+    const message = event.data as Readonly<Record<string, unknown>>;
+    if (
+      message.type !== "suwol-plugin:runtime-error" ||
+      typeof message.runtimeId !== "string"
+    )
+      return;
+    const runtime = [...this.#runtimes.values()].find(
+      (entry) => entry.descriptor.runtimeId === message.runtimeId,
+    );
+    if (runtime?.frame.contentWindow === event.source) void this.#crash(runtime);
+  };
 
   constructor(commands: CommandRegistry, workspace: WorkspaceStore) {
     this.#commands = commands;
@@ -92,16 +114,16 @@ export class PluginRuntimeController {
       getActive: () => this.#hostDocument(workspace.active),
       listOpen: () => workspace.documents.map((entry) => this.#requiredHostDocument(entry)),
     });
-    window.addEventListener("message", (event: MessageEvent<unknown>) => {
-      if (typeof event.data !== "object" || event.data === null) return;
-      const message = event.data as Readonly<Record<string, unknown>>;
-      if (message.type !== "suwol-plugin:runtime-error" || typeof message.runtimeId !== "string") return;
-      const runtime = [...this.#runtimes.values()].find((entry) => entry.descriptor.runtimeId === message.runtimeId);
-      if (runtime?.frame.contentWindow === event.source) void this.#crash(runtime);
-    });
+    this.#listen();
   }
 
   get snapshot(): PluginRuntimeSnapshot {
+    const now = Date.now(), active = this.#workspace.active,
+      activeId = active?.id ?? null,
+      activeFrameId = active?.view.activeFrameId ?? null;
+    for (const [key, entry] of this.#overlays)
+      if (now - entry.updatedAt > entry.update.lifetimeMs)
+        this.#overlays.delete(key);
     const panels = [...this.#runtimes.values()].flatMap((runtime) =>
       (runtime.descriptor.manifest.contributes?.panels ?? []).map((contribution) => ({
         pluginId: runtime.descriptor.pluginId,
@@ -125,7 +147,13 @@ export class PluginRuntimeController {
       importers: contributions.flatMap((entry) => entry.importers.map((contribution) => ({ pluginId: entry.pluginId, contribution }))),
       exporters: contributions.flatMap((entry) => entry.exporters.map((contribution) => ({ pluginId: entry.pluginId, contribution }))),
       tools: contributions.flatMap((entry) => entry.tools.map((contribution) => ({ pluginId: entry.pluginId, contribution }))),
-      overlays: [...this.#overlays.values()].filter((entry) => Date.now() - entry.updatedAt <= entry.update.lifetimeMs).map(({ pluginId, update }) => ({ pluginId, update })),
+      overlays: [...this.#overlays.values()]
+        .filter(
+          (entry) =>
+            entry.documentId === activeId &&
+            entry.frameId === activeFrameId,
+        )
+        .map(({ pluginId, update }) => ({ pluginId, update })),
       safeMode: this.#safeMode,
       selectedPluginId: this.#selectedPluginId,
       lastNotice: this.#lastNotice,
@@ -142,6 +170,7 @@ export class PluginRuntimeController {
   }
 
   async refresh(): Promise<void> {
+    this.#listen();
     const api = window.suwolDesktop?.plugins;
     if (api === undefined) return;
     const [installed, safeMode] = await Promise.all([api.list(), api.getSafeMode()]);
@@ -206,6 +235,7 @@ export class PluginRuntimeController {
       executions: new Map(),
       providerExecutions: new Map(),
       panelPorts: new Map(),
+      overlayGate: new PluginOverlayUpdateGate(),
       ready: false,
     };
     this.#runtimes.set(pluginId, record);
@@ -267,6 +297,7 @@ export class PluginRuntimeController {
     for (const [key, overlay] of [...this.#overlays])
       if (overlay.pluginId === pluginId) this.#overlays.delete(key);
     record.gate.clear();
+    record.overlayGate.clear();
     try {
       record.port.postMessage({ protocol: PLUGIN_PROTOCOL_VERSION, kind: "event", event: "runtime.deactivate", payload: null });
     } catch { /* Runtime is already gone. */ }
@@ -476,10 +507,17 @@ export class PluginRuntimeController {
     }
     if (method === "overlays.update") {
       requireGrant(grants, "ui.overlay");
+      runtime.overlayGate.enter();
       const update = validateOverlayUpdate(params, this.#workspace.active?.session.model.canvas ?? { width: 1, height: 1 });
       if (!runtime.descriptor.manifest.contributes?.overlays?.some((entry) => entry.id === update.overlayId))
         throw new PluginError("PERMISSION_DENIED", "Plugin overlay was not declared.");
-      this.#overlays.set(`${pluginId}:${update.overlayId}`, { pluginId, update, updatedAt: Date.now() });
+      this.#overlays.set(`${pluginId}:${update.overlayId}`, {
+        pluginId,
+        update,
+        updatedAt: Date.now(),
+        documentId: this.#workspace.active?.id ?? null,
+        frameId: this.#workspace.active?.view.activeFrameId ?? null,
+      });
       this.#touch();
       return null;
     }
@@ -524,10 +562,14 @@ export class PluginRuntimeController {
     const declared = kind === "importer" ? runtime.descriptor.manifest.contributes?.importers : kind === "exporter" ? runtime.descriptor.manifest.contributes?.exporters : runtime.descriptor.manifest.contributes?.tools;
     if (!declared?.some((entry) => entry.id === id)) throw new PluginError("PERMISSION_DENIED", "Plugin provider was not declared.");
     const executionId = crypto.randomUUID();
-    return await withTimeout(new Promise<unknown>((resolve, reject) => {
-      runtime.providerExecutions.set(executionId, { resolve, reject });
-      runtime.port.postMessage({ protocol: PLUGIN_PROTOCOL_VERSION, kind: "event", event: `${kind}.execute`, payload: { id, executionId, input } });
-    }), timeoutMs);
+    try {
+      return await withTimeout(new Promise<unknown>((resolve, reject) => {
+        runtime.providerExecutions.set(executionId, { resolve, reject });
+        runtime.port.postMessage({ protocol: PLUGIN_PROTOCOL_VERSION, kind: "event", event: `${kind}.execute`, payload: { id, executionId, input } });
+      }), timeoutMs);
+    } finally {
+      runtime.providerExecutions.delete(executionId);
+    }
   }
   async #crash(runtime: RuntimeRecord): Promise<void> {
     const pluginId = runtime.descriptor.pluginId;
@@ -569,6 +611,20 @@ export class PluginRuntimeController {
   #touch(): void {
     this.#version += 1;
     for (const listener of this.#listeners) listener();
+  }
+  #listen(): void {
+    if (this.#listening) return;
+    window.addEventListener("message", this.#onWindowMessage);
+    this.#listening = true;
+  }
+  async dispose(): Promise<void> {
+    if (this.#listening) {
+      window.removeEventListener("message", this.#onWindowMessage);
+      this.#listening = false;
+    }
+    for (const pluginId of [...this.#runtimes.keys()]) await this.stop(pluginId);
+    this.#progress.clear();
+    this.#overlays.clear();
   }
 }
 

@@ -125,6 +125,18 @@ export function deserializeSuwolPixel(archive: Uint8Array): DocumentSnapshot {
   for (const [name, bytes] of Object.entries(files)) { const match = /^plugin-data\/(.+)\.json$/.exec(name); if (match?.[1] === undefined) continue; pluginBytes += bytes.byteLength; if (bytes.byteLength > 1024 * 1024 || pluginBytes > 5 * 1024 * 1024) throw new Error("Plugin document data exceeds the size limit."); pluginData[match[1]] = parseJson(bytes); }
   model.pluginData = { ...(model.pluginData ?? {}), ...pluginData };
   if (manifest.documentId !== model.id) throw new Error("Manifest document id does not match document data.");
+  for (const name of Object.keys(files)) {
+    const image = /^images\/(.+)\.(rgba|idx)$/.exec(name);
+    if (image?.[1] !== undefined) {
+      const meta = model.images[image[1]],
+        expectedExtension = meta?.format === "rgba8" ? "rgba" : meta?.format === "indexed8" ? "idx" : null;
+      if (meta === undefined || image[2] !== expectedExtension)
+        throw new Error("Archive contains an orphan or mismatched image blob.");
+    }
+    const tilemap = /^tilemaps\/(.+)\.tile32$/.exec(name);
+    if (tilemap?.[1] !== undefined && model.tilemaps[tilemap[1]] === undefined)
+      throw new Error("Archive contains an orphan tilemap blob.");
+  }
   const images = new Map<string, Uint8Array>();
   for (const [imageId, meta] of Object.entries(model.images)) {
     const extension = meta.format === "rgba8" ? "rgba" : "idx", bytes = files[`images/${imageId}.${extension}`], expected = meta.width * meta.height * (meta.format === "rgba8" ? 4 : 1);

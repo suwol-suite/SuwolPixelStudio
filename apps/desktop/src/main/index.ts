@@ -46,6 +46,16 @@ async function createMainWindow(): Promise<BrowserWindow> {
     show: false,
     backgroundColor: "#17191d",
     title: "Suwol Pixel Studio",
+    ...(process.platform === "linux"
+      ? {
+          icon: app.isPackaged
+            ? path.join(process.resourcesPath, "studio.suwol.pixel.png")
+            : path.join(
+                app.getAppPath(),
+                "apps/desktop/assets/linux/studio.suwol.pixel.png",
+              ),
+        }
+      : {}),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -57,9 +67,11 @@ async function createMainWindow(): Promise<BrowserWindow> {
   });
 
   const developmentUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL;
-  const targetUrl = app.isPackaged
+  let targetUrl = app.isPackaged
     ? "suwol-pixel://app/index.html"
     : developmentUrl;
+  if (__SUWOL_E2E__ && process.argv.includes("--force-canvas2d"))
+    targetUrl += "?renderer=canvas2d";
   secureWindowNavigation(window, new URL(targetUrl).origin);
   window.webContents.on("did-fail-load", (_event, errorCode) => {
     logger.error(`Renderer load failed with code ${errorCode}.`);

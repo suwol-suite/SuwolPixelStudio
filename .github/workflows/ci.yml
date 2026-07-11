@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm workflow:check
+      - name: Validate workflow YAML syntax
+        run: ruby -e 'require "yaml"; ARGV.each { |file| YAML.parse_file(file) }' .github/workflows/*.yml
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm test:security
+      - run: pnpm plugin:validate
+      - run: pnpm plugin:pack
+      - run: pnpm license:check
+      - run: pnpm audit --prod
+
+  package-smoke:
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x64
+          - os: macos-14
+            arch: x64
+          - os: ubuntu-latest
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm plugin:pack
+      - run: pnpm package --arch=${{ matrix.arch }}
+      - run: pnpm package:smoke
+      - run: pnpm icon:verify-windows
+        if: runner.os == 'Windows'

@@ -132,6 +132,7 @@ export const APPLICATION_COMMAND_IDS = [
   "plugin.install",
   "plugin.enable",
   "plugin.disable",
+  "plugin.disableAll",
   "plugin.remove",
   "plugin.restart",
   "plugin.showPermissions",
@@ -149,6 +150,8 @@ export const APPLICATION_COMMAND_IDS = [
   "preferences.keybindings",
   "preferences.importKeybindings",
   "preferences.exportKeybindings",
+  "preferences.resetKeybindings",
+  "preferences.resetAll",
 ] as const;
 
 export type ApplicationCommandId = (typeof APPLICATION_COMMAND_IDS)[number];
@@ -222,6 +225,7 @@ export const NATIVE_MENU_COMMAND_IDS = [
   "plugin.install",
   "plugin.enable",
   "plugin.disable",
+  "plugin.disableAll",
   "plugin.remove",
   "plugin.restart",
   "plugin.showPermissions",

@@ -6,8 +6,8 @@
 
 ## 상태 경계
 
-- Document State: canvas, Layer/Frame/Cel/Tag order와 metadata, image refCount, v3 palette, revision
-- Pixel Storage: 연속 `Uint8Array`를 소유하는 `RgbaPixelSurface`
+- Document State: canvas color mode, Layer tree/Frame/Cel/Tag, TileSet/Tilemap/Slice, palette, metadata, image refCount, revision
+- Pixel Storage: 연속 `Uint8Array`를 소유하는 RGBA 또는 indexed `PixelSurface`와 별도 `Uint32` tilemap storage
 - Workspace State: Renderer의 `WorkspaceStore`가 열린 session, 활성 문서, opaque file handle을 관리
 - View State: 문서별 viewport, tool, active layer, foreground/background color, selection/floating selection
 - Preferences: 검증된 settings schema, 전역 최근 색상과 localStorage

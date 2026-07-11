@@ -25,7 +25,12 @@ import {
   type StrokeTransaction,
 } from "@suwol/editor-core";
 import { PixelRenderer, drawDeclarativeOverlays, drawEditorOverlay } from "@suwol/pixel-renderer";
-import type { OverlayUpdate } from "@suwol/plugin-api";
+import {
+  PLUGIN_LIMITS,
+  type OverlayUpdate,
+  type PluginToolOperation,
+} from "@suwol/plugin-api";
+import { PluginToolStrokeBroker } from "@suwol/plugin-host";
 import type { BrushPresetSetting } from "@suwol/shared";
 import { createLogger } from "@suwol/shared";
 import type { Translate } from "../i18n";
@@ -42,6 +47,12 @@ interface PixelCanvasProps {
   readonly t: Translate;
   readonly pluginOverlays?: readonly OverlayUpdate[];
   readonly brushPreset?: BrushPresetSetting | undefined;
+  readonly pluginTool?: Readonly<{ pluginId: string; toolId: string }> | null;
+  readonly onPluginToolEvent?: (
+    pluginId: string,
+    toolId: string,
+    event: unknown,
+  ) => Promise<readonly PluginToolOperation[]>;
 }
 interface DragState {
   readonly kind: "shape" | "selection" | "move";
@@ -52,7 +63,21 @@ interface DragState {
 }
 const logger = createLogger("renderer", import.meta.env.DEV);
 
-export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], brushPreset }: PixelCanvasProps) {
+interface PluginStrokeState {
+  readonly id: string;
+  readonly pluginId: string;
+  readonly toolId: string;
+  readonly broker: PluginToolStrokeBroker;
+  readonly generation: number;
+  queue: Promise<void>;
+  pending: Readonly<{ x: number; y: number; pressure: number }>[];
+  frame: number | null;
+  ending: boolean;
+  lastPoint: IntPoint;
+}
+const PLUGIN_TOOL_BATCH_MAX = Math.min(128, PLUGIN_LIMITS.toolPixelsPerStroke);
+
+export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], brushPreset, pluginTool = null, onPluginToolEvent }: PixelCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null),
     overlayRef = useRef<HTMLCanvasElement>(null),
     rendererRef = useRef<PixelRenderer | null>(null),
@@ -64,7 +89,77 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     previewFloatingRef = useRef<FloatingSelection | null>(null),
     selectionPreviewRef = useRef(entry.view.selection.clone()),
     fillWorkerRef = useRef<Worker | null>(null),
+    pluginStrokeRef = useRef<PluginStrokeState | null>(null),
+    pluginGenerationRef = useRef(0),
     spaceRef = useRef(false);
+
+  function queuePluginEvent(state: PluginStrokeState, input: unknown): void {
+    state.queue = state.queue.then(async () => {
+      if (
+        state.generation !== pluginGenerationRef.current ||
+        pluginStrokeRef.current !== state ||
+        onPluginToolEvent === undefined
+      )
+        return;
+      const operations = await onPluginToolEvent(
+        state.pluginId,
+        state.toolId,
+        input,
+      );
+      if (
+        state.generation !== pluginGenerationRef.current ||
+        pluginStrokeRef.current !== state
+      )
+        return;
+      for (const operation of operations)
+        state.broker.append(state.id, operation);
+    }).catch(() => {
+      if (pluginStrokeRef.current === state) cancelPluginStroke("crash");
+    });
+  }
+  function flushPluginPoints(state: PluginStrokeState): void {
+    state.frame = null;
+    if (state.pending.length === 0 || state.ending) return;
+    const points = state.pending.splice(0, PLUGIN_TOOL_BATCH_MAX);
+    queuePluginEvent(state, { type: "pointerMove", strokeId: state.id, points });
+    if (state.pending.length > 0)
+      state.frame = requestAnimationFrame(() => flushPluginPoints(state));
+  }
+  function schedulePluginPoints(
+    state: PluginStrokeState,
+    points: readonly Readonly<{ x: number; y: number; pressure: number }>[],
+  ): void {
+    for (const point of points) {
+      const dx = point.x - state.lastPoint.x,
+        dy = point.y - state.lastPoint.y,
+        steps = Math.max(Math.abs(dx), Math.abs(dy), 1);
+      for (let step = 1; step <= steps; step += 1) {
+        if (state.pending.length >= PLUGIN_LIMITS.toolPixelsPerStroke) break;
+        state.pending.push({
+          x: Math.round(state.lastPoint.x + (dx * step) / steps),
+          y: Math.round(state.lastPoint.y + (dy * step) / steps),
+          pressure: point.pressure,
+        });
+      }
+      state.lastPoint = { x: Math.round(point.x), y: Math.round(point.y) };
+    }
+    state.frame ??= requestAnimationFrame(() => flushPluginPoints(state));
+  }
+  function cancelPluginStroke(reason: "user" | "timeout" | "crash" | "playback" | "deactivated" = "user"): boolean {
+    const state = pluginStrokeRef.current;
+    if (state === null) return false;
+    pluginGenerationRef.current += 1;
+    pluginStrokeRef.current = null;
+    if (state.frame !== null) cancelAnimationFrame(state.frame);
+    state.broker.cancel(state.id);
+    if (onPluginToolEvent !== undefined)
+      void onPluginToolEvent(state.pluginId, state.toolId, {
+        type: "cancel",
+        strokeId: state.id,
+        reason,
+      }).catch(() => undefined);
+    return true;
+  }
 
   function activeSelection() {
     return entry.view.selection.bounds === null ? null : entry.view.selection;
@@ -229,6 +324,7 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     return committed;
   }
   function cancelTransient(): boolean {
+    if (cancelPluginStroke()) return true;
     if (fillWorkerRef.current !== null) {
       fillWorkerRef.current.terminate();
       fillWorkerRef.current = null;
@@ -259,6 +355,91 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     return false;
   }
 
+  function beginPluginStroke(
+    event: React.PointerEvent<HTMLCanvasElement>,
+    point: IntPoint,
+  ): boolean {
+    if (pluginTool === null || onPluginToolEvent === undefined) return false;
+    const layer = entry.session.model.layers[entry.view.activeLayerId];
+    if (layer?.kind !== "pixel" || layer.locked || !layer.visible) return true;
+    cancelPluginStroke("deactivated");
+    const id = crypto.randomUUID(),
+      generation = pluginGenerationRef.current + 1,
+      broker = new PluginToolStrokeBroker(entry.session, pluginTool.pluginId),
+      state: PluginStrokeState = {
+        id,
+        pluginId: pluginTool.pluginId,
+        toolId: pluginTool.toolId,
+        broker,
+        generation,
+        queue: Promise.resolve(),
+        pending: [],
+        frame: null,
+        ending: false,
+        lastPoint: point,
+      };
+    pluginGenerationRef.current = generation;
+    pluginStrokeRef.current = state;
+    try {
+      broker.begin(id, layer.id);
+      queuePluginEvent(state, {
+        type: "pointerDown",
+        strokeId: id,
+        position: point,
+        pressure: event.pressure > 0 ? event.pressure : 1,
+        modifiers: {
+          shift: event.shiftKey,
+          alt: event.altKey,
+          primary: event.button !== 2,
+        },
+        layerId: layer.id,
+        frameId: entry.view.activeFrameId,
+      });
+      state.pending.push({
+        ...point,
+        pressure: event.pressure > 0 ? event.pressure : 1,
+      });
+      state.frame = requestAnimationFrame(() => flushPluginPoints(state));
+    } catch {
+      cancelPluginStroke("crash");
+    }
+    return true;
+  }
+
+  function finishPluginStroke(): boolean {
+    const state = pluginStrokeRef.current;
+    if (state === null) return false;
+    state.ending = true;
+    if (state.frame !== null) cancelAnimationFrame(state.frame);
+    state.frame = null;
+    while (state.pending.length > 0) {
+      const points = state.pending.splice(0, PLUGIN_TOOL_BATCH_MAX);
+      queuePluginEvent(state, {
+        type: "pointerMove",
+        strokeId: state.id,
+        points,
+      });
+    }
+    queuePluginEvent(state, { type: "pointerUp", strokeId: state.id });
+    void state.queue.then(() => {
+      if (
+        pluginStrokeRef.current !== state ||
+        pluginGenerationRef.current !== state.generation
+      )
+        return;
+      pluginStrokeRef.current = null;
+      pluginGenerationRef.current += 1;
+      try {
+        if (state.broker.commit(state.id)) workspace.invalidateCanvas(entry.id);
+        else workspace.touch();
+        refresh();
+      } catch {
+        state.broker.cancel(state.id);
+      }
+    });
+    return true;
+  }
+
   useEffect(() => {
     const canvas = canvasRef.current,
       overlay = overlayRef.current;
@@ -266,6 +447,7 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     const renderer = new PixelRenderer(canvas, (message) =>
       logger.warn(message),
     );
+    if (__SUWOL_E2E__) overlay.dataset.rendererMode = renderer.mode;
     rendererRef.current = renderer;
     const resize = () => {
       renderer.resize(entry.view.viewport);
@@ -277,6 +459,8 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     };
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
+    window.addEventListener("resize", resize);
+    window.visualViewport?.addEventListener("resize", resize);
     resize();
     const keyDown = (event: KeyboardEvent) => {
       if (event.code === "Space") spaceRef.current = true;
@@ -347,7 +531,10 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     window.addEventListener("keydown", keyDown);
     window.addEventListener("keyup", keyUp);
     return () => {
+      cancelPluginStroke("deactivated");
       observer.disconnect();
+      window.removeEventListener("resize", resize);
+      window.visualViewport?.removeEventListener("resize", resize);
       renderer.dispose();
       rendererRef.current = null;
       fillWorkerRef.current?.terminate();
@@ -368,6 +555,17 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
   useEffect(() => {
     renderOverlay();
   }, [workspace.version]);
+  useEffect(
+    () => () => {
+      cancelPluginStroke("deactivated");
+    },
+    [
+      pluginTool?.pluginId,
+      pluginTool?.toolId,
+      entry.view.activeLayerId,
+      entry.view.activeFrameId,
+    ],
+  );
 
   function handlePointerDown(
     event: React.PointerEvent<HTMLCanvasElement>,
@@ -381,6 +579,7 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     }
     const point = pixelPoint(event);
     if (point === null) return;
+    if (beginPluginStroke(event, point)) return;
     if (entry.view.activeTool.startsWith("tile")) {
       applyTileTool(point);
       return;
@@ -575,6 +774,16 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     }
     const raw = rawPixelPoint(event),
       point = pixelPoint(event);
+    const pluginStroke = pluginStrokeRef.current;
+    if (pluginStroke !== null && !pluginStroke.ending) {
+      schedulePluginPoints(pluginStroke, [
+        {
+          ...raw,
+          pressure: event.pressure > 0 ? event.pressure : 1,
+        },
+      ]);
+      return;
+    }
     if (point !== null && (entry.view.activeTool === "tilePencil" || entry.view.activeTool === "tileEraser") && event.buttons !== 0) {
       applyTileTool(point);
       return;
@@ -612,6 +821,11 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
   }
   function finishPointer(event: React.PointerEvent<HTMLCanvasElement>): void {
     panRef.current = null;
+    if (finishPluginStroke()) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId))
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      return;
+    }
     if (strokeRef.current !== null) {
       const stroke = strokeRef.current;
       strokeRef.current = null;
@@ -681,12 +895,15 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
       <canvas
         ref={canvasRef}
         className="pixel-canvas"
-        aria-label={t("canvas.label")}
+        aria-hidden="true"
       />
       <canvas
         ref={overlayRef}
         className="pixel-overlay"
         data-testid="pixel-canvas"
+        role="application"
+        tabIndex={0}
+        aria-label={t("canvas.label")}
         onContextMenu={(event) => event.preventDefault()}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}

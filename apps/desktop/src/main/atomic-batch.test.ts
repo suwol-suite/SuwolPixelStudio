@@ -43,4 +43,20 @@ describe("atomic export batch", () => {
     ).rejects.toThrow();
     expect(await fs.readdir(target)).toEqual([]);
   });
+  it("rolls back files already replaced when a later replacement fails", async () => {
+    const target = await directory();
+    await fs.writeFile(path.join(target, "a.png"), "old-a");
+    await fs.writeFile(path.join(target, "b.png"), "old-b");
+    await expect(atomicBatchWrite(target, [
+      { name: "a.png", bytes: new TextEncoder().encode("new-a") },
+      { name: "b.png", bytes: new TextEncoder().encode("new-b") },
+    ], {
+      beforeReplace: (index) => {
+        if (index === 1) throw new Error("injected batch failure");
+      },
+    })).rejects.toThrow("injected");
+    expect(await fs.readFile(path.join(target, "a.png"), "utf8")).toBe("old-a");
+    expect(await fs.readFile(path.join(target, "b.png"), "utf8")).toBe("old-b");
+    expect((await fs.readdir(target)).sort()).toEqual(["a.png", "b.png"]);
+  });
 });

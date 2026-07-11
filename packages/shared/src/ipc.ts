@@ -24,6 +24,9 @@ export type {
 export const IPC_CHANNELS = Object.freeze({
   appGetVersion: "suwol:app:get-version",
   appGetPlatform: "suwol:app:get-platform",
+  appGetDiagnostics: "suwol:app:get-diagnostics",
+  appOpenLogsFolder: "suwol:app:open-logs-folder",
+  appCopyDiagnostics: "suwol:app:copy-diagnostics",
   shellOpenExternal: "suwol:shell:open-external",
   commandInvoke: "suwol:command:invoke",
   commandSetState: "suwol:command:set-state",
@@ -67,6 +70,22 @@ export const IPC_CHANNELS = Object.freeze({
 
 export const platformSchema = z.enum(["win32", "darwin", "linux"]);
 export type SupportedPlatform = z.infer<typeof platformSchema>;
+export const appDiagnosticsSchema = z
+  .object({
+    productName: z.literal("Suwol Pixel Studio"),
+    version: z.string().regex(/^\d+\.\d+\.\d+$/),
+    electron: z.string().min(1).max(40),
+    chromium: z.string().min(1).max(40),
+    node: z.string().min(1).max(40),
+    platform: platformSchema,
+    architecture: z.enum(["x64", "arm64", "ia32", "arm"]),
+    fileFormatVersion: z.literal(4),
+    pluginApiVersion: z.literal("1.1.0"),
+    license: z.literal("Apache-2.0"),
+    repository: z.literal("https://github.com/suwol-suite/SuwolPixelStudio"),
+  })
+  .strict();
+export type AppDiagnostics = z.infer<typeof appDiagnosticsSchema>;
 
 export const applicationCommandIdSchema = z.enum(APPLICATION_COMMAND_IDS);
 export const commandStateSchema = z
@@ -294,6 +313,9 @@ export interface SuwolDesktopApi {
   readonly app: Readonly<{
     getVersion(): Promise<string>;
     getPlatform(): Promise<SupportedPlatform>;
+    getDiagnostics(): Promise<AppDiagnostics>;
+    openLogsFolder(): Promise<void>;
+    copyDiagnostics(): Promise<void>;
   }>;
   readonly shell: Readonly<{
     openExternal(url: string): Promise<void>;

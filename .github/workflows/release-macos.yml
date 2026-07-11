@@ -1,0 +1,193 @@
+name: Release macOS follow-up
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to augment (for example v0.6.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate version tag
+        run: pnpm release:verify-tag --tag="$RELEASE_TAG"
+      - name: Require macOS release secrets
+        env:
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          MAC_KEYCHAIN_PASSWORD: ${{ secrets.MAC_KEYCHAIN_PASSWORD }}
+        run: |
+          for value in APPLE_APP_SPECIFIC_PASSWORD APPLE_ID APPLE_TEAM_ID CSC_KEY_PASSWORD CSC_LINK MAC_KEYCHAIN_PASSWORD; do
+            test -n "${!value}" || { echo "Missing required macOS release secret: $value"; exit 1; }
+          done
+      - name: Import Developer ID certificate into temporary keychain
+        env:
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          MAC_KEYCHAIN_PASSWORD: ${{ secrets.MAC_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/suwol-release.keychain-db"
+          certificate="$RUNNER_TEMP/suwol-release.p12"
+          encoded="${CSC_LINK#data:application/x-pkcs12;base64,}"
+          printf '%s' "$encoded" | base64 --decode > "$certificate"
+          security create-keychain -p "$MAC_KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$MAC_KEYCHAIN_PASSWORD" "$keychain"
+          security import "$certificate" -P "$CSC_KEY_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$MAC_KEYCHAIN_PASSWORD" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk -F '"' '/Developer ID Application/{print $2; exit}')"
+          test -n "$identity" || { echo "Developer ID Application identity was not found in CSC_LINK"; exit 1; }
+          echo "MACOS_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "MACOS_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+      - run: pnpm plugin:validate && pnpm plugin:pack && pnpm license:check
+      - name: Build signed and notarized macOS app, ZIP and DMG
+        env:
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm make --arch=arm64
+      - name: Sign, notarize and staple DMG
+        env:
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          dmg="$(find out/make -type f -name '*.dmg' -print -quit)"
+          test -n "$dmg"
+          codesign --force --timestamp --options runtime --keychain "$MACOS_KEYCHAIN" --sign "$MACOS_SIGNING_IDENTITY" "$dmg"
+          xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$dmg"
+      - name: Verify codesign, Gatekeeper and stapling
+        run: |
+          set -euo pipefail
+          app_path="$(find out -type d -name '*.app' -print -quit)"
+          dmg="$(find out/make -type f -name '*.dmg' -print -quit)"
+          test -n "$app_path" && test -n "$dmg"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          codesign --verify --strict --verbose=2 "$dmg"
+          spctl --assess --type execute --verbose=4 "$app_path"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
+          xcrun stapler validate "$app_path"
+          xcrun stapler validate "$dmg"
+          mount_point="$RUNNER_TEMP/suwol-dmg"
+          mkdir "$mount_point"
+          device="$(hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_point" | awk '/^\/dev\//{print $1; exit}')"
+          trap 'hdiutil detach "$device" >/dev/null' EXIT
+          dmg_app="$(find "$mount_point" -type d -name '*.app' -print -quit)"
+          test -n "$dmg_app"
+          cmp apps/desktop/assets/icon.icns "$dmg_app/Contents/Resources/electron.icns"
+          hdiutil detach "$device" >/dev/null
+          trap - EXIT
+      - name: Prepare and validate macOS assets
+        id: version
+        run: |
+          pnpm release:prepare --platform=mac --arch=arm64
+          pnpm release:validate --scope=mac
+          pnpm release:checksums --scope=mac
+          pnpm release:checksums --scope=mac --verify
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-mac-arm64
+          path: |
+            artifacts/release/SuwolPixelStudio-${{ steps.version.outputs.version }}-mac-arm64.dmg
+            artifacts/release/SuwolPixelStudio-${{ steps.version.outputs.version }}-mac-arm64.zip
+          if-no-files-found: error
+      - name: Remove temporary keychain and certificate
+        if: always()
+        env:
+          MAC_KEYCHAIN_PASSWORD: ${{ secrets.MAC_KEYCHAIN_PASSWORD }}
+        run: |
+          security delete-keychain "$RUNNER_TEMP/suwol-release.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/suwol-release.p12"
+
+  publish-macos:
+    needs: build-macos
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-mac-arm64
+          path: artifacts/macos
+      - name: Wait for core Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then exit 0; fi
+            echo "Waiting for core Release ($attempt/30)"
+            sleep 20
+          done
+          echo "Timed out waiting for release-core to create $RELEASE_TAG"
+          exit 1
+      - name: Upload macOS assets to existing Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" artifacts/macos/* --clobber
+      - name: Download complete distribution asset set
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/final
+          gh release download "$RELEASE_TAG" --dir artifacts/final --pattern 'SuwolPixelStudio-*' --clobber
+          pnpm release:verify-tag --tag="$RELEASE_TAG"
+          pnpm release:validate --scope=all --dir=artifacts/final
+          pnpm release:checksums --scope=all --dir=artifacts/final
+          pnpm release:checksums --scope=all --dir=artifacts/final --verify
+      - name: Re-sign and verify complete checksums
+        env:
+          GPG_PRIVATE_KEY_B64: ${{ secrets.GPG_PRIVATE_KEY_B64 }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          bash scripts/sign-checksums.sh artifacts/final
+      - name: Replace final checksum assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" artifacts/final/checksums.txt artifacts/final/checksums.txt.asc --clobber

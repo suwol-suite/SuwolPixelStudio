@@ -5,7 +5,11 @@ import {
   type ReactNode,
 } from "react";
 import type { CommandRegistry } from "@suwol/command-system";
-import type { OverlayUpdate, PluginToolContribution } from "@suwol/plugin-api";
+import type {
+  OverlayUpdate,
+  PluginToolContribution,
+  PluginToolOperation,
+} from "@suwol/plugin-api";
 import type {
   Rgba,
   SelectionOperation,
@@ -50,6 +54,11 @@ interface Props {
   readonly pluginOverlays?: readonly OverlayUpdate[];
   readonly pluginTools?: readonly Readonly<{ pluginId: string; contribution: PluginToolContribution }>[];
   readonly onPluginTool?: (pluginId: string, toolId: string) => Promise<void>;
+  readonly onPluginToolEvent?: (
+    pluginId: string,
+    toolId: string,
+    event: unknown,
+  ) => Promise<readonly PluginToolOperation[]>;
 }
 function IconButton({
   label,
@@ -797,6 +806,7 @@ export function EditorShell({
   pluginOverlays = [],
   pluginTools = [],
   onPluginTool,
+  onPluginToolEvent,
 }: Props) {
   const active = workspace.active,
     right =
@@ -822,20 +832,27 @@ export function EditorShell({
             </div>
           ) : (
             workspace.documents.map((entry) => (
-              <button
+              <div
                 className={`document-tab ${active?.id === entry.id ? "active" : ""}`}
                 role="tab"
+                tabIndex={active?.id === entry.id ? 0 : -1}
                 aria-selected={active?.id === entry.id}
                 key={entry.id}
                 onClick={() => workspace.activate(entry.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    workspace.activate(entry.id);
+                  }
+                }}
               >
                 <span>
                   {entry.session.model.name}
                   {entry.session.isDirty ? " •" : ""}
                 </span>
-                <span
+                <button
                   className="tab-close"
-                  role="button"
+                  type="button"
                   aria-label={t("file.close")}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -843,8 +860,8 @@ export function EditorShell({
                   }}
                 >
                   ×
-                </span>
-              </button>
+                </button>
+              </div>
             ))
           )}
         </div>
@@ -909,6 +926,10 @@ export function EditorShell({
                   aria-label={contribution.title}
                   title={contribution.title}
                   disabled={active === null || onPluginTool === undefined}
+                  aria-pressed={
+                    active?.view.pluginTool?.pluginId === pluginId &&
+                    active.view.pluginTool.toolId === contribution.id
+                  }
                   key={`${pluginId}:${contribution.id}`}
                   onClick={() => { if (onPluginTool !== undefined) void onPluginTool(pluginId, contribution.id); }}
                 >
@@ -956,6 +977,10 @@ export function EditorShell({
               status={status}
               t={t}
               pluginOverlays={pluginOverlays}
+              pluginTool={active.view.pluginTool}
+              {...(onPluginToolEvent === undefined
+                ? {}
+                : { onPluginToolEvent })}
               brushPreset={settings.brushPresets.find((preset) => preset.id === active.view.brushPresetId)}
             />
           </section>

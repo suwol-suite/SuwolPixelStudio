@@ -1,4 +1,10 @@
-import { useEffect, useRef, type MouseEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { Icon } from "./Icon";
 
 interface DialogProps {
@@ -18,6 +24,7 @@ export function Dialog({
 }: DialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  const titleId = useId();
 
   useEffect(() => {
     previousFocus.current =
@@ -65,12 +72,12 @@ export function Dialog({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="dialog-title"
+        aria-labelledby={titleId}
         tabIndex={-1}
         onKeyDown={handleKey}
       >
         <header className="dialog-header">
-          <h2 id="dialog-title">{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           <button
             className="icon-button"
             type="button"

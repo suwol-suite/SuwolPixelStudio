@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
   IPC_CHANNELS,
+  appDiagnosticsSchema,
   applicationCommandIdSchema,
   clipboardPngRequestSchema,
   commandStateSchema,
@@ -73,6 +74,24 @@ const api: SuwolDesktopApi = Object.freeze({
         IPC_CHANNELS.appGetPlatform,
       );
       return unwrap(response, (value) => platformSchema.parse(value));
+    },
+    async getDiagnostics() {
+      const response: unknown = await ipcRenderer.invoke(
+        IPC_CHANNELS.appGetDiagnostics,
+      );
+      return unwrap(response, (value) => appDiagnosticsSchema.parse(value));
+    },
+    async openLogsFolder() {
+      const response: unknown = await ipcRenderer.invoke(
+        IPC_CHANNELS.appOpenLogsFolder,
+      );
+      unwrap(response, parseVoid);
+    },
+    async copyDiagnostics() {
+      const response: unknown = await ipcRenderer.invoke(
+        IPC_CHANNELS.appCopyDiagnostics,
+      );
+      unwrap(response, parseVoid);
     },
   }),
   shell: Object.freeze({

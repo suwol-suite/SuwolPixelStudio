@@ -26,7 +26,7 @@ thumbnail.png
 }
 ```
 
-Parser는 manifest와 document를 Zod strict schema로 검증한다. v1 문서는 계속 읽을 수 있으며 loader가 메모리에서 v2의 빈 palette를 추가한 뒤 v3 Frame/Cel 구조로 순차 migration한다. v1 writer는 더 이상 기본 출력이 아니며 이 문서는 호환 명세로 유지한다.
+Parser는 manifest와 document를 Zod strict schema로 검증한다. v1 문서는 계속 읽을 수 있으며 loader가 메모리에서 v2의 빈 palette, v3 Frame/Cel 구조, v4 전문 편집 모델로 순차 migration한다. v1 writer는 더 이상 기본 출력이 아니며 이 문서는 호환 명세로 유지한다.
 
 ## Archive limits
 

@@ -5,6 +5,7 @@ import path from "node:path";
 export async function atomicBatchWrite(
   directory: string,
   entries: readonly { readonly name: string; readonly bytes: Uint8Array }[],
+  options: Readonly<{ beforeReplace?: (index: number) => Promise<void> | void }> = {},
 ): Promise<void> {
   const transactionId = randomUUID(),
     temporaryDirectory = path.join(
@@ -24,7 +25,7 @@ export async function atomicBatchWrite(
         await file.close();
       }
     }
-    for (const entry of entries) {
+    for (const [index, entry] of entries.entries()) {
       const source = path.join(temporaryDirectory, entry.name),
         target = path.join(directory, entry.name),
         backup = path.join(directory, `.${entry.name}.${transactionId}.bak`);
@@ -36,6 +37,7 @@ export async function atomicBatchWrite(
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
       moved.push({ target, backup: backupPath });
+      await options.beforeReplace?.(index);
       await fs.rename(source, target);
     }
     await Promise.all(

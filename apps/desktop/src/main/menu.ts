@@ -597,7 +597,7 @@ export function installApplicationMenu(
         { id: "plugin.manage", label: t.managePlugins, click: commandClick(window, "plugin.manage") },
         { id: "plugin.install", label: t.installPlugin, click: commandClick(window, "plugin.install") },
         { type: "separator" },
-        { id: "plugin.disable", label: t.disableAllPlugins, click: commandClick(window, "plugin.disable") },
+        { id: "plugin.disableAll", label: t.disableAllPlugins, click: commandClick(window, "plugin.disableAll") },
         { id: "plugin.enterSafeMode", label: t.safeMode, click: commandClick(window, "plugin.enterSafeMode") },
         { id: "plugin.restart", label: t.reloadPlugins, click: commandClick(window, "plugin.restart") },
         { type: "separator" },

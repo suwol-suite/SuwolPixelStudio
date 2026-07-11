@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { atomicBatchWrite } from "./atomic-batch";
+import { atomicWrite } from "./atomic-file";
+import { RecoveryStore } from "./recovery-store";
 import {
   IPC_CHANNELS,
   isSafeExportRelativePath,
@@ -11,7 +13,6 @@ import {
   openDialogOptionsSchema,
   recoveryDeleteRequestSchema,
   recoveryWriteRequestSchema,
-  recoverySnapshotInfoSchema,
   saveDialogOptionsSchema,
   testDialogRequestSchema,
   type FileHandle,
@@ -19,7 +20,6 @@ import {
   type IpcResult,
   type Logger,
   type OpenDialogResult,
-  type RecoverySnapshotInfo,
   type SaveDialogResult,
 } from "@suwol/shared";
 
@@ -75,6 +75,10 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 export class SecureFileService {
   readonly #handles = new Map<string, HandleEntry>();
   readonly #directories = new Map<string, HandleEntry>();
+  readonly #recovery = new RecoveryStore(
+    path.join(app.getPath("userData"), "recovery"),
+    MAX_FILE_BYTES,
+  );
   readonly #e2eRoot = path.join(app.getPath("temp"), "suwol-pixel-studio-e2e");
   #nextOpenPath: string | null = null;
   #nextSavePath: string | null = null;
@@ -311,34 +315,11 @@ export class SecureFileService {
             "Recovery snapshot is invalid.",
           );
         try {
-          const directory = path.join(app.getPath("userData"), "recovery");
-          await fs.mkdir(directory, { recursive: true });
-          const metadata: RecoverySnapshotInfo = {
-            documentId: parsed.data.documentId,
-            displayName: parsed.data.displayName,
-            originalHandleId: parsed.data.originalHandleId,
-            originalDisplayName: parsed.data.originalDisplayName,
-            revision: parsed.data.revision,
-            timestamp: parsed.data.timestamp,
-            lastSavedTimestamp: parsed.data.lastSavedTimestamp,
-            width: parsed.data.width,
-            height: parsed.data.height,
-            corrupt: false,
-            thumbnail: null,
-          };
-          await atomicWrite(
-            path.join(directory, `${parsed.data.documentId}.suwolpixel`),
-            new Uint8Array(parsed.data.data),
-          );
-          await atomicWrite(
-            path.join(directory, `${parsed.data.documentId}.json`),
-            new TextEncoder().encode(JSON.stringify(metadata)),
-          );
-          if (parsed.data.thumbnail !== undefined)
-            await atomicWrite(
-              path.join(directory, `${parsed.data.documentId}.thumbnail.png`),
-              new Uint8Array(parsed.data.thumbnail),
-            );
+          const { thumbnail, ...snapshot } = parsed.data;
+          await this.#recovery.write({
+            ...snapshot,
+            ...(thumbnail === undefined ? {} : { thumbnail }),
+          });
           return success(null);
         } catch {
           this.logger.error("Recovery snapshot write failed.");
@@ -352,50 +333,9 @@ export class SecureFileService {
 
     ipcMain.handle(IPC_CHANNELS.recoveryList, async () => {
       try {
-        const directory = path.join(app.getPath("userData"), "recovery");
-        const names = await fs.readdir(directory).catch(() => [] as string[]);
-        const results: RecoverySnapshotInfo[] = [];
-        for (const name of names
-          .filter((value) => value.endsWith(".json"))
-          .slice(0, 256)) {
-          try {
-            const value = JSON.parse(
-              await fs.readFile(path.join(directory, name), "utf8"),
-            ) as unknown;
-            const parsed = recoverySnapshotInfoSchema.safeParse(value);
-            if (parsed.success) {
-              const thumbnail = await fs
-                .readFile(
-                  path.join(
-                    directory,
-                    `${parsed.data.documentId}.thumbnail.png`,
-                  ),
-                )
-                .then(toArrayBuffer)
-                .catch(() => null);
-              results.push({ ...parsed.data, thumbnail });
-            } else throw new Error("invalid");
-          } catch {
-            const documentId = name.slice(0, -5);
-            if (/^[a-zA-Z0-9-]{1,100}$/.test(documentId))
-              results.push({
-                documentId,
-                displayName: "Corrupt recovery",
-                originalHandleId: null,
-                originalDisplayName: null,
-                revision: 0,
-                timestamp: Date.now(),
-                lastSavedTimestamp: null,
-                width: 1,
-                height: 1,
-                corrupt: true,
-                thumbnail: null,
-              });
-          }
-        }
-        return success<readonly RecoverySnapshotInfo[]>(results);
+        return success(await this.#recovery.list());
       } catch {
-        return success<readonly RecoverySnapshotInfo[]>([]);
+        return success([]);
       }
     });
 
@@ -409,18 +349,7 @@ export class SecureFileService {
             "Recovery id is invalid.",
           );
         try {
-          const filePath = path.join(
-              app.getPath("userData"),
-              "recovery",
-              `${parsed.data.documentId}.suwolpixel`,
-            ),
-            stat = await fs.stat(filePath);
-          if (!stat.isFile() || stat.size > MAX_FILE_BYTES)
-            return failure<ArrayBuffer>(
-              "NOT_ALLOWED",
-              "Recovery snapshot is invalid.",
-            );
-          return success(toArrayBuffer(await fs.readFile(filePath)));
+          return success(await this.#recovery.read(parsed.data.documentId));
         } catch {
           return failure<ArrayBuffer>(
             "INTERNAL_ERROR",
@@ -436,36 +365,14 @@ export class SecureFileService {
         const parsed = recoveryDeleteRequestSchema.safeParse(input);
         if (!parsed.success)
           return failure<null>("INVALID_INPUT", "Recovery id is invalid.");
-        const directory = path.join(app.getPath("userData"), "recovery");
-        await Promise.all([
-          fs.rm(path.join(directory, `${parsed.data.documentId}.suwolpixel`), {
-            force: true,
-          }),
-          fs.rm(path.join(directory, `${parsed.data.documentId}.json`), {
-            force: true,
-          }),
-          fs.rm(
-            path.join(directory, `${parsed.data.documentId}.thumbnail.png`),
-            { force: true },
-          ),
-        ]).catch(() => undefined);
+        await this.#recovery.delete(parsed.data.documentId).catch(() => undefined);
         return success(null);
       },
     );
 
     ipcMain.handle(IPC_CHANNELS.recoveryDeleteAll, async () => {
-      const directory = path.join(app.getPath("userData"), "recovery");
       try {
-        const names = await fs.readdir(directory).catch(() => [] as string[]);
-        await Promise.all(
-          names
-            .filter((name) =>
-              /^[a-zA-Z0-9-]{1,100}\.(?:json|suwolpixel|thumbnail\.png)$/.test(
-                name,
-              ),
-            )
-            .map((name) => fs.rm(path.join(directory, name), { force: true })),
-        );
+        await this.#recovery.deleteAll();
         return success(null);
       } catch {
         return failure<null>(
@@ -552,43 +459,4 @@ function ensureExtension(filePath: string, extension: string): string {
   return filePath.toLocaleLowerCase("en-US").endsWith(`.${extension}`)
     ? filePath
     : `${filePath}.${extension}`;
-}
-
-async function atomicWrite(
-  targetPath: string,
-  bytes: Uint8Array,
-): Promise<void> {
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  const temporary = path.join(
-    path.dirname(targetPath),
-    `.${path.basename(targetPath)}.${randomUUID()}.tmp`,
-  );
-  const backup = `${targetPath}.bak`;
-  const file = await fs.open(temporary, "wx");
-  try {
-    await file.writeFile(bytes);
-    await file.sync();
-  } finally {
-    await file.close();
-  }
-  try {
-    await fs.rm(backup, { force: true });
-    try {
-      await fs.rename(targetPath, backup);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    await fs.rename(temporary, targetPath);
-    await fs.rm(backup, { force: true }).catch(() => undefined);
-  } catch (error) {
-    await fs.rm(temporary, { force: true }).catch(() => undefined);
-    try {
-      await fs.stat(backup);
-      await fs.rm(targetPath, { force: true });
-      await fs.rename(backup, targetPath);
-    } catch {
-      /* No backup was available to restore. */
-    }
-    throw error;
-  }
 }

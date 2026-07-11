@@ -66,4 +66,21 @@ describe("settings validation", () => {
         .recentColors,
     ).toEqual([]);
   });
+  it("recovers corrupt preference areas without discarding valid siblings", () => {
+    const settings = normalizeSettings({
+      version: 2,
+      theme: "light",
+      language: "ko",
+      uiScale: 2,
+      layouts: [{ broken: true }],
+      keybindings: { schemaVersion: 1, preset: "bad", entries: [] },
+      recentColors: [[1, 2, 3, 999]],
+      brushPresets: [{ id: "broken" }],
+    });
+    expect(settings).toMatchObject({ theme: "light", language: "ko", uiScale: 2 });
+    expect(settings.layouts).toHaveLength(1);
+    expect(settings.keybindings).toEqual(DEFAULT_SETTINGS.keybindings);
+    expect(settings.recentColors).toEqual([]);
+    expect(settings.brushPresets).toEqual([]);
+  });
 });

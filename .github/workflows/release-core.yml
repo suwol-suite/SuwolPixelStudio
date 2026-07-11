@@ -1,0 +1,194 @@
+name: Release core (Windows and Linux)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to release (for example v0.6.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-core-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate version tag
+        shell: bash
+        run: pnpm release:verify-tag --tag="$RELEASE_TAG"
+      - run: pnpm plugin:validate && pnpm plugin:pack && pnpm license:check
+        shell: bash
+      - name: Build unsigned Windows ZIP
+        shell: bash
+        run: pnpm make --arch=x64
+      - name: Prepare and validate Windows asset
+        id: version
+        shell: bash
+        run: |
+          pnpm release:prepare --platform=win --arch=x64
+          pnpm release:validate --scope=win
+          pnpm icon:verify-windows
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          test ! -e "artifacts/release/Setup.exe"
+          ! find artifacts/release -type f \( -iname '*.nupkg' -o -iname '*.msi' \) -print -quit | grep -q .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-win-x64
+          path: artifacts/release/SuwolPixelStudio-${{ steps.version.outputs.version }}-win-x64.zip
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+      - name: Install AppImage build tools
+        run: sudo apt-get update && sudo apt-get install --yes squashfs-tools
+      - run: pnpm install --frozen-lockfile
+      - name: Validate version tag
+        shell: bash
+        run: pnpm release:verify-tag --tag="$RELEASE_TAG"
+      - run: pnpm plugin:validate && pnpm plugin:pack && pnpm license:check
+      - name: Fetch and verify AppImage type-2 runtime
+        run: |
+          runtime="$RUNNER_TEMP/runtime-x86_64"
+          curl --fail --location --silent --show-error --output "$runtime" https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+          echo "1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf  $runtime" | sha256sum --check
+          echo "APPIMAGE_RUNTIME=$runtime" >> "$GITHUB_ENV"
+      - name: Build Linux ZIP and AppImage
+        run: |
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_TAG")"
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >> "$GITHUB_ENV"
+          pnpm make --arch=x64
+      - name: Prepare and validate Linux assets
+        id: version
+        run: |
+          pnpm release:prepare --platform=linux --arch=x64
+          pnpm release:validate --scope=linux
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          appimage="$GITHUB_WORKSPACE/artifacts/release/SuwolPixelStudio-$version-linux-x64.AppImage"
+          extract_dir="$RUNNER_TEMP/suwol-appimage-extract"
+          mkdir "$extract_dir"
+          cd "$extract_dir"
+          "$appimage" --appimage-extract >/dev/null
+          test -L squashfs-root/.DirIcon
+          test -f squashfs-root/Suwol\ Pixel\ Studio.desktop
+          find squashfs-root/usr/share/icons -type f -name 'suwol-pixel-studio.png' -print -quit | grep -q .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-x64
+          path: |
+            artifacts/release/SuwolPixelStudio-${{ steps.version.outputs.version }}-linux-x64.zip
+            artifacts/release/SuwolPixelStudio-${{ steps.version.outputs.version }}-linux-x64.AppImage
+          if-no-files-found: error
+
+  publish-core:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: artifacts/release
+          merge-multiple: true
+      - name: Preserve final checksum scope on a core rerun
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          scope=core
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            asset_names="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+            version="$(node -p "require('./package.json').version")"
+            has_dmg=false
+            has_zip=false
+            grep -qx "SuwolPixelStudio-$version-mac-arm64.dmg" <<<"$asset_names" && has_dmg=true
+            grep -qx "SuwolPixelStudio-$version-mac-arm64.zip" <<<"$asset_names" && has_zip=true
+            if [[ "$has_dmg" != "$has_zip" ]]; then
+              echo "Existing Release has a partial macOS upload; rerun release-macos before repairing core assets."
+              exit 1
+            fi
+            if [[ "$has_dmg" == true ]]; then
+              gh release download "$RELEASE_TAG" --dir artifacts/release --pattern 'SuwolPixelStudio-*-mac-arm64.*' --clobber
+              scope=all
+            fi
+          fi
+          echo "CHECKSUM_SCOPE=$scope" >> "$GITHUB_ENV"
+      - name: Validate assets and generate checksums
+        run: |
+          pnpm release:verify-tag --tag="$RELEASE_TAG"
+          pnpm release:validate --scope="$CHECKSUM_SCOPE"
+          pnpm release:checksums --scope="$CHECKSUM_SCOPE"
+          pnpm release:checksums --scope="$CHECKSUM_SCOPE" --verify
+      - name: Sign and verify core checksums
+        env:
+          GPG_PRIVATE_KEY_B64: ${{ secrets.GPG_PRIVATE_KEY_B64 }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          bash scripts/sign-checksums.sh artifacts/release
+      - name: Create or repair public core Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          assets=(artifacts/release/SuwolPixelStudio-* artifacts/release/checksums.txt artifacts/release/checksums.txt.asc)
+          version="$(node -p "require('./package.json').version")"
+          prerelease=false
+          [[ "$version" == *-* ]] && prerelease=true
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          else
+            release_flags=(--verify-tag --generate-notes --title "Suwol Pixel Studio $RELEASE_TAG")
+            if [[ "$prerelease" == true ]]; then
+              release_flags+=(--prerelease --latest=false --notes "Release Candidate build for testing. Known limitations: https://github.com/suwol-suite/SuwolPixelStudio/blob/$RELEASE_TAG/docs/release/known-limitations.md")
+            fi
+            gh release create "$RELEASE_TAG" "${assets[@]}" "${release_flags[@]}"
+          fi
+          if [[ "$prerelease" == true ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false --title "Suwol Pixel Studio $RELEASE_TAG"
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --title "Suwol Pixel Studio $RELEASE_TAG"
+          fi

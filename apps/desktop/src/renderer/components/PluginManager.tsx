@@ -59,7 +59,13 @@ export function PluginManager({ controller, t, onClose, onRunImporter, onRunExpo
   async function install(): Promise<void> {
     if (inspection === null) return;
     await run(async () => {
-      await window.suwolDesktop?.plugins.install(inspection.handle, [...installGrants]);
+      const checked = document.querySelectorAll<HTMLInputElement>(
+        "[data-plugin-install-grant]:checked",
+      );
+      await window.suwolDesktop?.plugins.install(
+        inspection.handle,
+        [...checked].map((item) => item.value as PluginPermission),
+      );
       setInspection(null);
       await controller.refresh();
       controller.select(inspection.manifest.id);
@@ -104,7 +110,7 @@ export function PluginManager({ controller, t, onClose, onRunImporter, onRunExpo
             <legend>{t("plugin.permissions")}</legend>
             {inspection.manifest.permissions.map((permission) => (
               <label key={permission}>
-                <input type="checkbox" checked={installGrants.has(permission)} onChange={() => toggleInstallGrant(permission)} />
+                <input data-plugin-install-grant type="checkbox" value={permission} checked={installGrants.has(permission)} onChange={() => toggleInstallGrant(permission)} />
                 <span>{permissionLabel(permission, t)}</span>
                 {inspection.newPermissions.includes(permission) && <strong>{t("plugin.newPermission")}</strong>}
               </label>

@@ -5,6 +5,7 @@ coverage/
 playwright-report/
 test-results/
 artifacts/plugins/
+artifacts/release/
 .plugin-dev/
 plugin-data/
 plugin-logs/

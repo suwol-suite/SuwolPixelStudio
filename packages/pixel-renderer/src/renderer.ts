@@ -31,11 +31,23 @@ export class PixelRenderer {
   #texture: WebGLTexture | null = null;
   #program: WebGLProgram | null = null;
   #vao: WebGLVertexArrayObject | null = null;
+  #buffer: WebGLBuffer | null = null;
   #bytes: Uint8Array | null = null;
   #width = 0;
   #height = 0;
   #viewport: Viewport | null = null;
   #frame: number | null = null;
+  #disposed = false;
+  readonly #onContextLost = (event: Event): void => {
+    event.preventDefault();
+    this.onDiagnostic("WebGL2 context lost; rendering is paused.");
+  };
+  readonly #onContextRestored = (): void => {
+    if (this.#disposed) return;
+    this.#initializeGl();
+    this.#uploadFull();
+    this.requestRender();
+  };
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -43,7 +55,11 @@ export class PixelRenderer {
   ) {
     this.#canvas = canvas;
     this.#offscreen = document.createElement("canvas");
-    const gl = canvas.getContext("webgl2", {
+    const forceCanvas2d =
+      __SUWOL_E2E__ &&
+      new URLSearchParams(globalThis.location.search).get("renderer") ===
+        "canvas2d";
+    const gl = forceCanvas2d ? null : canvas.getContext("webgl2", {
       alpha: false,
       antialias: false,
       depth: false,
@@ -54,15 +70,8 @@ export class PixelRenderer {
       this.#context2d = null;
       this.mode = "webgl2";
       this.#initializeGl();
-      canvas.addEventListener("webglcontextlost", (event) => {
-        event.preventDefault();
-        this.onDiagnostic("WebGL2 context lost; rendering is paused.");
-      });
-      canvas.addEventListener("webglcontextrestored", () => {
-        this.#initializeGl();
-        this.#uploadFull();
-        this.requestRender();
-      });
+      canvas.addEventListener("webglcontextlost", this.#onContextLost);
+      canvas.addEventListener("webglcontextrestored", this.#onContextRestored);
     } else {
       this.#gl = null;
       this.#context2d = canvas.getContext("2d", { alpha: false });
@@ -72,6 +81,7 @@ export class PixelRenderer {
       this.mode = "canvas2d";
       this.onDiagnostic("WebGL2 unavailable; Canvas 2D fallback is active.");
     }
+    if (__SUWOL_E2E__) canvas.dataset.rendererMode = this.mode;
   }
 
   update(
@@ -123,7 +133,7 @@ export class PixelRenderer {
   }
 
   requestRender(): void {
-    if (this.#frame !== null) return;
+    if (this.#disposed || this.#frame !== null) return;
     this.#frame = requestAnimationFrame(() => {
       this.#frame = null;
       this.#render();
@@ -131,17 +141,26 @@ export class PixelRenderer {
   }
 
   dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
     if (this.#frame !== null) cancelAnimationFrame(this.#frame);
-    if (this.#gl !== null) {
-      if (this.#texture !== null) this.#gl.deleteTexture(this.#texture);
-      if (this.#program !== null) this.#gl.deleteProgram(this.#program);
-      if (this.#vao !== null) this.#gl.deleteVertexArray(this.#vao);
-    }
+    this.#frame = null;
+    this.#canvas.removeEventListener("webglcontextlost", this.#onContextLost);
+    this.#canvas.removeEventListener(
+      "webglcontextrestored",
+      this.#onContextRestored,
+    );
+    this.#releaseGl();
+    this.#bytes = null;
+    this.#viewport = null;
+    this.#offscreen.width = 0;
+    this.#offscreen.height = 0;
   }
 
   #initializeGl(): void {
     const gl = this.#gl;
     if (gl === null) return;
+    this.#releaseGl();
     const vertex = compileShader(
       gl,
       gl.VERTEX_SHADER,
@@ -160,8 +179,12 @@ export class PixelRenderer {
     gl.attachShader(program, vertex);
     gl.attachShader(program, fragment);
     gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+    gl.deleteShader(vertex);
+    gl.deleteShader(fragment);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      gl.deleteProgram(program);
       throw new Error("Unable to link WebGL program.");
+    }
     const vao = gl.createVertexArray();
     const buffer = gl.createBuffer();
     gl.bindVertexArray(vao);
@@ -176,12 +199,26 @@ export class PixelRenderer {
     gl.vertexAttribPointer(location, 2, gl.FLOAT, false, 0, 0);
     this.#program = program;
     this.#vao = vao;
+    this.#buffer = buffer;
     this.#texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.#texture);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
+
+  #releaseGl(): void {
+    const gl = this.#gl;
+    if (gl === null) return;
+    if (this.#texture !== null) gl.deleteTexture(this.#texture);
+    if (this.#program !== null) gl.deleteProgram(this.#program);
+    if (this.#vao !== null) gl.deleteVertexArray(this.#vao);
+    if (this.#buffer !== null) gl.deleteBuffer(this.#buffer);
+    this.#texture = null;
+    this.#program = null;
+    this.#vao = null;
+    this.#buffer = null;
   }
 
   #uploadFull(): void {
@@ -352,8 +389,10 @@ function compileShader(
   if (shader === null) throw new Error("Unable to create WebGL shader.");
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    gl.deleteShader(shader);
     throw new Error("Unable to compile WebGL shader.");
+  }
   return shader;
 }
 
