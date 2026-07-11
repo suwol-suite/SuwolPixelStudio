@@ -27,7 +27,7 @@ importers:
         specifier: workspace:1.1.0
         version: link:packages/plugin-api
       '@suwol/plugin-host':
-        specifier: workspace:0.6.0
+        specifier: workspace:0.6.0-rc.1
         version: link:packages/plugin-host
       '@suwol/shared':
         specifier: workspace:0.0.0
@@ -136,7 +136,7 @@ importers:
         specifier: workspace:1.1.0
         version: link:../../packages/plugin-api
       '@suwol/plugin-host':
-        specifier: workspace:0.6.0
+        specifier: workspace:0.6.0-rc.1
         version: link:../../packages/plugin-host
       '@suwol/shared':
         specifier: workspace:0.0.0

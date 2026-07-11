@@ -73,7 +73,7 @@ export type SupportedPlatform = z.infer<typeof platformSchema>;
 export const appDiagnosticsSchema = z
   .object({
     productName: z.literal("Suwol Pixel Studio"),
-    version: z.string().regex(/^\d+\.\d+\.\d+$/),
+    version: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/),
     electron: z.string().min(1).max(40),
     chromium: z.string().min(1).max(40),
     node: z.string().min(1).max(40),

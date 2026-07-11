@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  appDiagnosticsSchema,
   applicationCommandIdSchema,
   commandStateSchema,
   fileHandleSchema,
@@ -13,6 +14,27 @@ import {
 } from "./ipc";
 
 describe("IPC contracts", () => {
+  it.each(["0.6.0", "0.6.0-rc.1", "0.6.0-beta.1", "0.6.0-alpha.1"])(
+    "accepts supported application version %s",
+    (version) => {
+      expect(
+        appDiagnosticsSchema.safeParse({
+          productName: "Suwol Pixel Studio",
+          version,
+          electron: "43.1.0",
+          chromium: "142.0.0.0",
+          node: "22.12.0",
+          platform: "darwin",
+          architecture: "arm64",
+          fileFormatVersion: 4,
+          pluginApiVersion: "1.1.0",
+          license: "Apache-2.0",
+          repository: "https://github.com/suwol-suite/SuwolPixelStudio",
+        }).success,
+      ).toBe(true);
+    },
+  );
+
   it("accepts only supported application command ids", () => {
     expect(
       applicationCommandIdSchema.safeParse("view.commandPalette").success,

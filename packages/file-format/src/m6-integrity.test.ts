@@ -21,7 +21,7 @@ function archive() {
   session.commitStroke(stroke);
   session.setPluginData("studio.suwol.fixture", { schemaVersion: 1, stable: true });
   session.model.metadata["future.optional"] = { value: 7 };
-  return { session, bytes: serializeSuwolPixel(session.snapshot(), "0.6.0") };
+  return { session, bytes: serializeSuwolPixel(session.snapshot(), "0.6.0-rc.1") };
 }
 function mutateDocument(
   bytes: Uint8Array,
@@ -38,7 +38,7 @@ function mutateDocument(
 describe("M6 v4 format freeze", () => {
   it("preserves IDs, ordering, metadata and plugin data across save/reopen/save", () => {
     const first = archive(), loaded = deserializeSuwolPixel(first.bytes),
-      second = deserializeSuwolPixel(serializeSuwolPixel(loaded, "0.6.0"));
+      second = deserializeSuwolPixel(serializeSuwolPixel(loaded, "0.6.0-rc.1"));
     expect(hashSnapshot(second)).toBe(hashSnapshot(loaded));
     expect(second.model.rootLayerIds).toEqual(loaded.model.rootLayerIds);
     expect(second.model.frameOrder).toEqual(loaded.model.frameOrder);
@@ -54,7 +54,7 @@ describe("M6 v4 format freeze", () => {
       quantization: "exact",
       dithering: "none",
     });
-    const loaded = deserializeSuwolPixel(serializeSuwolPixel(session.snapshot(), "0.6.0"));
+    const loaded = deserializeSuwolPixel(serializeSuwolPixel(session.snapshot(), "0.6.0-rc.1"));
     expect(loaded.model.canvas.colorMode).toBe("indexed");
     expect(loaded.model.palette.transparentIndex).toBe(0);
   });
@@ -68,7 +68,7 @@ describe("M6 v4 format freeze", () => {
   });
   it("rejects a layer cycle before exposing a document", () => {
     const { session } = archive(), group = addGroup(session, "Group"),
-      bytes = serializeSuwolPixel(session.snapshot(), "0.6.0");
+      bytes = serializeSuwolPixel(session.snapshot(), "0.6.0-rc.1");
     const broken = mutateDocument(bytes, (document) => {
       const layers = document.layers as Record<string, Record<string, unknown>>;
       layers[group] = { ...layers[group], parentId: group, childIds: [group] };
