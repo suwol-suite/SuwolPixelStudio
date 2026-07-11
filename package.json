@@ -1,7 +1,7 @@
 {
   "name": "suwol-pixel-studio",
   "productName": "Suwol Pixel Studio",
-  "version": "0.6.0-rc.1",
+  "version": "0.6.0-rc.2",
   "description": "A secure, modern desktop workspace for pixel art creation.",
   "author": "Suwol Pixel Studio contributors",
   "license": "Apache-2.0",
@@ -9,7 +9,7 @@
   "main": ".vite/build/main.js",
   "packageManager": "pnpm@11.11.0",
   "engines": {
-    "node": ">=22.12.0",
+    "node": ">=22.13.0",
     "pnpm": ">=11.0.0"
   },
   "scripts": {
@@ -42,7 +42,7 @@
     "@suwol/file-format": "workspace:0.0.0",
     "@suwol/pixel-renderer": "workspace:0.0.0",
     "@suwol/plugin-api": "workspace:1.1.0",
-    "@suwol/plugin-host": "workspace:0.6.0-rc.1",
+    "@suwol/plugin-host": "workspace:0.6.0-rc.2",
     "@suwol/shared": "workspace:0.0.0",
     "@suwol/ui": "workspace:0.0.0",
     "react": "19.2.7",
