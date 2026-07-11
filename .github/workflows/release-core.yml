@@ -159,6 +159,7 @@ jobs:
           echo "CHECKSUM_SCOPE=$scope" >> "$GITHUB_ENV"
       - name: Validate assets and generate checksums
         run: |
+          chmod +x artifacts/release/SuwolPixelStudio-*-linux-x64.AppImage
           pnpm release:verify-tag --tag="$RELEASE_TAG"
           pnpm release:validate --scope="$CHECKSUM_SCOPE"
           pnpm release:checksums --scope="$CHECKSUM_SCOPE"

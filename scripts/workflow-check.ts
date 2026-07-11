@@ -20,6 +20,7 @@ requireText(core, [
   "--prerelease=false",
   "Known limitations:",
   "bash scripts/sign-checksums.sh",
+  "chmod +x artifacts/release/SuwolPixelStudio-*-linux-x64.AppImage",
   "--clobber",
 ], "release-core.yml");
 requireText(mac, [
@@ -35,6 +36,7 @@ requireText(mac, [
   "--clobber",
   "checksums.txt.asc",
   "bash scripts/sign-checksums.sh",
+  "chmod +x artifacts/final/SuwolPixelStudio-*-linux-x64.AppImage",
 ], "release-macos.yml");
 requireText(ci, ["pnpm install --frozen-lockfile", "pnpm workflow:check", "pnpm package:smoke"], "ci.yml");
 if (core.includes("CSC_LINK") || core.includes("APPLE_ID")) throw new Error("Windows/Linux core release must not require macOS secrets.");

@@ -177,6 +177,7 @@ jobs:
         run: |
           mkdir -p artifacts/final
           gh release download "$RELEASE_TAG" --dir artifacts/final --pattern 'SuwolPixelStudio-*' --clobber
+          chmod +x artifacts/final/SuwolPixelStudio-*-linux-x64.AppImage
           pnpm release:verify-tag --tag="$RELEASE_TAG"
           pnpm release:validate --scope=all --dir=artifacts/final
           pnpm release:checksums --scope=all --dir=artifacts/final
