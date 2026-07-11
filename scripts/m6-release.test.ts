@@ -10,7 +10,7 @@ const root = JSON.parse(readFileSync("package.json", "utf8")) as Readonly<{
 
 describe("M6 release metadata", () => {
   it("keeps version, license and release scripts consistent", () => {
-    expect(root.version).toBe("0.6.0-rc.3");
+    expect(root.version).toBe("0.6.0-rc.4");
     expect(root.license).toBe("Apache-2.0");
     expect(typeof root.scripts["package:smoke"]).toBe("string");
     expect(typeof root.scripts["release:prepare"]).toBe("string");
@@ -18,12 +18,12 @@ describe("M6 release metadata", () => {
     expect(typeof root.scripts["release:verify-tag"]).toBe("string");
     expect(typeof root.scripts["workflow:check"]).toBe("string");
     expect(typeof root.scripts["license:check"]).toBe("string");
-    expect(readFileSync("README.md", "utf8")).toContain("v0.6.0-rc.3 / M6");
+    expect(readFileSync("README.md", "utf8")).toContain("v0.6.0-rc.4 / M6");
   });
   it("validates privacy-safe diagnostic metadata", () => {
     const info = appDiagnosticsSchema.parse({
       productName: "Suwol Pixel Studio",
-      version: "0.6.0-rc.3",
+      version: "0.6.0-rc.4",
       electron: "43.1.0",
       chromium: "142.0.0.0",
       node: "22.12.0",
@@ -61,6 +61,7 @@ describe("M6 release metadata", () => {
     expect(readFileSync("forge.config.ts", "utf8")).toContain("studio.suwol.pixel.document");
     expect(readFileSync("apps/desktop/assets/linux/application-x-suwol-pixel-studio.png").readUInt32BE(16)).toBe(512);
     expect(forge).toContain('name: "@reforged/maker-appimage"');
+    expect(forge).toContain('compressor: "zstd"');
     expect(readFileSync("apps/desktop/src/renderer/components/AboutDialog.tsx", "utf8")).toContain("studio.suwol.pixel.png");
   });
   it("separates core publication from the macOS follow-up", () => {

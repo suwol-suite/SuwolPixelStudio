@@ -118,7 +118,7 @@ const config: ForgeConfig = {
                   "application/x-suwol-pixel-studio",
                   "image/png",
                 ],
-                compressor: "xz",
+                compressor: "zstd",
                 ...(process.env.APPIMAGE_RUNTIME === undefined
                   ? {}
                   : { runtime: process.env.APPIMAGE_RUNTIME }),

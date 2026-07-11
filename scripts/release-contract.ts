@@ -104,7 +104,8 @@ async function zipEntries(file: string): Promise<readonly ZipEntry[]> {
 }
 
 function hasSuffix(entries: readonly ZipEntry[], suffix: string): boolean {
-  return entries.some(({ name }) => name.endsWith(suffix));
+  const relative = suffix.startsWith("/") ? suffix.slice(1) : suffix;
+  return entries.some(({ name }) => name === relative || name.endsWith(`/${relative}`));
 }
 
 export function normalizeZipEntryName(name: string): string {
@@ -123,11 +124,11 @@ async function validateZip(file: string, platform: "win" | "linux" | "mac"): Pro
   const entries = (await zipEntries(file)).map((entry) => ({ ...entry, name: normalizeZipEntryName(entry.name) }));
   if (entries.length === 0) throw new Error(`ZIP is empty: ${path.basename(file)}`);
   if (platform === "win") {
-    const executable = entries.find(({ name }) => name.endsWith("/SuwolPixelStudio.exe"));
+    const executable = entries.find(
+      ({ name }) => name === "SuwolPixelStudio.exe" || name.endsWith("/SuwolPixelStudio.exe"),
+    );
     if (executable === undefined || !hasSuffix(entries, "/resources/app.asar"))
       throw new Error("Windows ZIP is missing its executable or ASAR.");
-    const roots = new Set(entries.map(({ name }) => name.split("/")[0]).filter(Boolean));
-    if (roots.size !== 1) throw new Error("Windows ZIP has an unexpected nested root structure.");
   } else if (platform === "linux") {
     const executable = entries.find(({ name }) => name.endsWith("/SuwolPixelStudio"));
     if (executable === undefined || (executable.mode & 0o111) === 0)
@@ -162,9 +163,12 @@ export async function validateReleaseAssets(directory: string, version: string, 
       await validateZip(file, name.includes("-win-") ? "win" : name.includes("-linux-") ? "linux" : "mac");
     if (name.endsWith(".AppImage")) {
       await access(file, 1);
-      const handle = await open(file, "r"), magic = Buffer.alloc(4);
-      try { await handle.read(magic, 0, 4, 0); } finally { await handle.close(); }
-      if (!magic.equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) throw new Error("AppImage is not an ELF executable.");
+      const handle = await open(file, "r"), magic = Buffer.alloc(11);
+      try { await handle.read(magic, 0, magic.length, 0); } finally { await handle.close(); }
+      if (!magic.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
+        throw new Error("AppImage is not an ELF executable.");
+      if (!magic.subarray(8, 11).equals(Buffer.from([0x41, 0x49, 0x02])))
+        throw new Error("AppImage is not a type-2 image.");
     }
   }
   if (names.some((name) => /(?:Setup\.exe|\.nupkg|\.msi)$/i.test(name)))
