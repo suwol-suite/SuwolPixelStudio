@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+blockExoticSubdeps: false
+nodeLinker: hoisted
+overrides:
+  yauzl: 3.4.0
+allowBuilds:
+  electron-winstaller: true

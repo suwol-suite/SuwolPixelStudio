@@ -1,0 +1,36 @@
+{
+  "manifestVersion": 1,
+  "id": "studio.suwol.example-command",
+  "name": "Invert Selection",
+  "version": "0.1.0",
+  "apiVersion": "^1.0.0",
+  "engines": { "suwolPixelStudio": ">=0.4.0" },
+  "entry": "dist/main.js",
+  "publisher": "Suwol Pixel Studio",
+  "description": "Inverts RGB in the current selection or active Cel using one undoable transaction.",
+  "permissions": [
+    "document.read",
+    "document.write",
+    "selection.read",
+    "ui.command",
+    "ui.menu",
+    "ui.notification"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "studio.suwol.example-command.invert",
+        "title": "Invert Selection or Active Cel",
+        "requiresActiveDocument": true
+      }
+    ],
+    "menus": [
+      {
+        "location": "plugins",
+        "command": "studio.suwol.example-command.invert",
+        "group": "samples",
+        "order": 10
+      }
+    ]
+  }
+}

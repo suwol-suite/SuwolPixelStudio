@@ -1,0 +1,18 @@
+{
+  "manifestVersion": 1,
+  "id": "studio.suwol.example-professional",
+  "name": "Professional API 1.1 Sample",
+  "version": "0.1.0",
+  "apiVersion": "^1.1.0",
+  "engines": { "suwolPixelStudio": ">=0.5.0" },
+  "entry": "dist/main.js",
+  "publisher": "Suwol Pixel Studio",
+  "description": "Demonstrates importer, exporter, interactive tool, and declarative overlay contributions.",
+  "permissions": ["file.import", "file.export", "ui.tool", "ui.overlay", "document.read", "document.write"],
+  "contributes": {
+    "importers": [{ "id": "studio.suwol.example-professional.importer", "title": "Single Pixel JSON", "extensions": [".pixeljson"], "mimeTypes": ["application/json"] }],
+    "exporters": [{ "id": "studio.suwol.example-professional.exporter", "title": "Document Summary JSON", "extensions": [".json"] }],
+    "tools": [{ "id": "studio.suwol.example-professional.tool", "title": "Safe Dot Tool" }],
+    "overlays": [{ "id": "studio.suwol.example-professional.overlay", "title": "Safe Guide", "zOrder": "above-document" }]
+  }
+}

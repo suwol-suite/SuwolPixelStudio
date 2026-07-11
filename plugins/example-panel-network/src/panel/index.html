@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="panel.css" />
+    <script type="module" src="panel.js"></script>
+    <title>Local Pixel Generator</title>
+  </head>
+  <body>
+    <main>
+      <h1>Local Pixel Generator</h1>
+      <p id="document">No document information yet.</p>
+      <label>Local endpoint <input id="endpoint" value="http://127.0.0.1:43127/generate" /></label>
+      <button id="generate" type="button" disabled>Generate and insert</button>
+      <button id="crash" type="button" disabled>Test runtime isolation</button>
+      <p id="status" role="status">Waiting for host…</p>
+    </main>
+  </body>
+</html>

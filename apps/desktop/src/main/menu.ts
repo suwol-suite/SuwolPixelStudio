@@ -1,0 +1,624 @@
+import {
+  Menu,
+  type BrowserWindow,
+  type MenuItemConstructorOptions,
+} from "electron";
+import {
+  DEFAULT_KEYBINDINGS,
+  IPC_CHANNELS,
+  NATIVE_MENU_COMMAND_IDS,
+  type ApplicationCommandId,
+  type PluginMenuCommand,
+} from "@suwol/shared";
+
+const menuCommandIds = new Set<ApplicationCommandId>(NATIVE_MENU_COMMAND_IDS);
+type MenuLanguage = "ko" | "en";
+
+const labels = {
+  en: {
+    file: "File",
+    edit: "Edit",
+    sprite: "Sprite",
+    layer: "Layer",
+    frame: "Frame",
+    select: "Select",
+    view: "View",
+    window: "Window",
+    plugins: "Plugins",
+    help: "Help",
+    unavailable: "Not available",
+    new: "New",
+    open: "Open…",
+    save: "Save",
+    saveAs: "Save As…",
+    exportPng: "Export PNG…",
+    exportPngSequence: "Export PNG Sequence…",
+    exportSpriteSheet: "Export Sprite Sheet…",
+    exportGif: "Export GIF…",
+    exportApng: "Export APNG…",
+    close: "Close Document",
+    undo: "Undo",
+    redo: "Redo",
+    cut: "Cut",
+    copy: "Copy",
+    paste: "Paste",
+    delete: "Delete",
+    pencil: "Pencil",
+    eraser: "Eraser",
+    eyedropper: "Eyedropper",
+    fill: "Fill",
+    line: "Line",
+    rectangle: "Rectangle",
+    ellipse: "Ellipse",
+    selection: "Rectangular Selection",
+    move: "Move",
+    crop: "Crop to Selection",
+    canvasSize: "Canvas Size…",
+    spriteSize: "Sprite Size…",
+    selectAll: "Select All",
+    deselect: "Deselect",
+    addLayer: "Add Layer",
+    deleteLayer: "Delete Layer",
+    duplicateLayer: "Duplicate Layer",
+    addFrame: "New Frame",
+    duplicateFrame: "Duplicate Frame",
+    duplicateLinkedFrame: "Duplicate as Linked Cel",
+    deleteFrame: "Delete Frame",
+    previousFrame: "Previous Frame",
+    nextFrame: "Next Frame",
+    frameDuration: "Frame Duration…",
+    linkCel: "Link Cel to Previous",
+    unlinkCel: "Unlink Cel",
+    addTag: "Add Tag…",
+    editTag: "Edit Tag…",
+    deleteTag: "Delete Tag",
+    commandPalette: "Command Palette…",
+    zoomIn: "Zoom In",
+    zoomOut: "Zoom Out",
+    zoom100: "100%",
+    zoomFit: "Fit to View",
+    onionSkin: "Onion Skin",
+    onionSkinSettings: "Onion Skin Settings…",
+    timelineZoomIn: "Timeline Zoom In",
+    timelineZoomOut: "Timeline Zoom Out",
+    theme: "Theme",
+    system: "System",
+    dark: "Dark",
+    light: "Light",
+    resetLayout: "Reset Layout",
+    tools: "Tools",
+    layers: "Layers",
+    timeline: "Timeline",
+    about: "About Suwol Pixel Studio",
+    managePlugins: "Manage Plugins",
+    installPlugin: "Install Plugin…",
+    disableAllPlugins: "Disable All Plugins",
+    safeMode: "Safe Mode",
+    reloadPlugins: "Reload Enabled Plugins",
+    installedPluginCommands: "Installed Plugin Commands",
+  },
+  ko: {
+    file: "파일",
+    edit: "편집",
+    sprite: "스프라이트",
+    layer: "레이어",
+    frame: "프레임",
+    select: "선택",
+    view: "보기",
+    window: "창",
+    plugins: "플러그인",
+    help: "도움말",
+    unavailable: "사용할 수 없음",
+    new: "새로 만들기",
+    open: "열기…",
+    save: "저장",
+    saveAs: "다른 이름으로 저장…",
+    exportPng: "PNG 내보내기…",
+    exportPngSequence: "PNG 시퀀스 내보내기…",
+    exportSpriteSheet: "스프라이트 시트 내보내기…",
+    exportGif: "GIF 내보내기…",
+    exportApng: "APNG 내보내기…",
+    close: "문서 닫기",
+    undo: "실행 취소",
+    redo: "다시 실행",
+    cut: "잘라내기",
+    copy: "복사",
+    paste: "붙여넣기",
+    delete: "삭제",
+    pencil: "연필",
+    eraser: "지우개",
+    eyedropper: "스포이트",
+    fill: "채우기",
+    line: "선",
+    rectangle: "사각형",
+    ellipse: "타원",
+    selection: "사각형 선택",
+    move: "이동",
+    crop: "선택 영역으로 자르기",
+    canvasSize: "캔버스 크기…",
+    spriteSize: "스프라이트 크기…",
+    selectAll: "전체 선택",
+    deselect: "선택 해제",
+    addLayer: "레이어 추가",
+    deleteLayer: "레이어 삭제",
+    duplicateLayer: "레이어 복제",
+    addFrame: "새 프레임",
+    duplicateFrame: "프레임 복제",
+    duplicateLinkedFrame: "연결된 Cel로 복제",
+    deleteFrame: "프레임 삭제",
+    previousFrame: "이전 프레임",
+    nextFrame: "다음 프레임",
+    frameDuration: "프레임 지속 시간…",
+    linkCel: "이전 Cel에 연결",
+    unlinkCel: "Cel 연결 해제",
+    addTag: "태그 추가…",
+    editTag: "태그 편집…",
+    deleteTag: "태그 삭제",
+    commandPalette: "명령 팔레트…",
+    zoomIn: "확대",
+    zoomOut: "축소",
+    zoom100: "100%",
+    zoomFit: "화면에 맞추기",
+    onionSkin: "어니언 스킨",
+    onionSkinSettings: "어니언 스킨 설정…",
+    timelineZoomIn: "타임라인 확대",
+    timelineZoomOut: "타임라인 축소",
+    theme: "테마",
+    system: "시스템",
+    dark: "다크",
+    light: "라이트",
+    resetLayout: "레이아웃 초기화",
+    tools: "도구",
+    layers: "레이어",
+    timeline: "타임라인",
+    about: "Suwol Pixel Studio 정보",
+    managePlugins: "플러그인 관리",
+    installPlugin: "플러그인 설치…",
+    disableAllPlugins: "모든 플러그인 비활성화",
+    safeMode: "안전 모드",
+    reloadPlugins: "활성 플러그인 다시 불러오기",
+    installedPluginCommands: "설치된 플러그인 명령",
+  },
+} as const;
+
+function commandClick(
+  window: BrowserWindow,
+  commandId: ApplicationCommandId,
+): () => void {
+  return () => {
+    if (!window.isDestroyed() && menuCommandIds.has(commandId))
+      window.webContents.send(IPC_CHANNELS.commandInvoke, commandId);
+  };
+}
+export function installApplicationMenu(
+  window: BrowserWindow,
+  locale: string,
+  pluginCommands: readonly PluginMenuCommand[] = [],
+): void {
+  const language: MenuLanguage = locale
+    .toLocaleLowerCase("en-US")
+    .startsWith("ko")
+    ? "ko"
+    : "en";
+  const t = labels[language];
+  const template: MenuItemConstructorOptions[] = [];
+  if (process.platform === "darwin")
+    template.push({
+      label: "Suwol Pixel Studio",
+      submenu: [{ role: "about" }, { type: "separator" }, { role: "quit" }],
+    });
+  template.push(
+    {
+      label: t.file,
+      submenu: [
+        {
+          label: t.new,
+          accelerator: DEFAULT_KEYBINDINGS["file.new"],
+          click: commandClick(window, "file.new"),
+        },
+        {
+          label: t.open,
+          accelerator: DEFAULT_KEYBINDINGS["file.open"],
+          click: commandClick(window, "file.open"),
+        },
+        { type: "separator" },
+        {
+          id: "file.save",
+          label: t.save,
+          accelerator: DEFAULT_KEYBINDINGS["file.save"],
+          click: commandClick(window, "file.save"),
+        },
+        {
+          id: "file.saveAs",
+          label: t.saveAs,
+          accelerator: DEFAULT_KEYBINDINGS["file.saveAs"],
+          click: commandClick(window, "file.saveAs"),
+        },
+        {
+          id: "file.exportPng",
+          label: t.exportPng,
+          click: commandClick(window, "file.exportPng"),
+        },
+        {
+          id: "file.exportPngSequence",
+          label: t.exportPngSequence,
+          click: commandClick(window, "file.exportPngSequence"),
+        },
+        {
+          id: "file.exportSpriteSheet",
+          label: t.exportSpriteSheet,
+          click: commandClick(window, "file.exportSpriteSheet"),
+        },
+        {
+          id: "file.exportGif",
+          label: t.exportGif,
+          click: commandClick(window, "file.exportGif"),
+        },
+        {
+          id: "file.exportApng",
+          label: t.exportApng,
+          click: commandClick(window, "file.exportApng"),
+        },
+        { type: "separator" },
+        {
+          id: "file.close",
+          label: t.close,
+          accelerator: DEFAULT_KEYBINDINGS["file.close"],
+          click: commandClick(window, "file.close"),
+        },
+        ...(process.platform === "darwin"
+          ? []
+          : [{ type: "separator" as const }, { role: "quit" as const }]),
+      ],
+    },
+    {
+      label: t.edit,
+      submenu: [
+        {
+          id: "edit.undo",
+          label: t.undo,
+          accelerator: DEFAULT_KEYBINDINGS["edit.undo"],
+          click: commandClick(window, "edit.undo"),
+        },
+        {
+          id: "edit.redo",
+          label: t.redo,
+          accelerator: DEFAULT_KEYBINDINGS["edit.redo"],
+          click: commandClick(window, "edit.redo"),
+        },
+        { type: "separator" },
+        {
+          id: "edit.cut",
+          label: t.cut,
+          accelerator: DEFAULT_KEYBINDINGS["edit.cut"],
+          click: commandClick(window, "edit.cut"),
+        },
+        {
+          id: "edit.copy",
+          label: t.copy,
+          accelerator: DEFAULT_KEYBINDINGS["edit.copy"],
+          click: commandClick(window, "edit.copy"),
+        },
+        {
+          id: "edit.paste",
+          label: t.paste,
+          accelerator: DEFAULT_KEYBINDINGS["edit.paste"],
+          click: commandClick(window, "edit.paste"),
+        },
+        {
+          id: "edit.delete",
+          label: t.delete,
+          accelerator: DEFAULT_KEYBINDINGS["edit.delete"],
+          click: commandClick(window, "edit.delete"),
+        },
+      ],
+    },
+    {
+      label: t.sprite,
+      submenu: [
+        {
+          id: "sprite.cropToSelection",
+          label: t.crop,
+          click: commandClick(window, "sprite.cropToSelection"),
+        },
+        {
+          id: "sprite.canvasResize",
+          label: t.canvasSize,
+          click: commandClick(window, "sprite.canvasResize"),
+        },
+        {
+          id: "sprite.spriteResize",
+          label: t.spriteSize,
+          click: commandClick(window, "sprite.spriteResize"),
+        },
+        { type: "separator" },
+        {
+          id: "tool.pencil",
+          label: t.pencil,
+          click: commandClick(window, "tool.pencil"),
+        },
+        {
+          id: "tool.eraser",
+          label: t.eraser,
+          click: commandClick(window, "tool.eraser"),
+        },
+        {
+          id: "tool.eyedropper",
+          label: t.eyedropper,
+          click: commandClick(window, "tool.eyedropper"),
+        },
+        {
+          id: "tool.fill",
+          label: t.fill,
+          click: commandClick(window, "tool.fill"),
+        },
+        {
+          id: "tool.line",
+          label: t.line,
+          click: commandClick(window, "tool.line"),
+        },
+        {
+          id: "tool.rectangle",
+          label: t.rectangle,
+          click: commandClick(window, "tool.rectangle"),
+        },
+        {
+          id: "tool.ellipse",
+          label: t.ellipse,
+          click: commandClick(window, "tool.ellipse"),
+        },
+        {
+          id: "tool.selectionRect",
+          label: t.selection,
+          click: commandClick(window, "tool.selectionRect"),
+        },
+        {
+          id: "tool.move",
+          label: t.move,
+          click: commandClick(window, "tool.move"),
+        },
+      ],
+    },
+    {
+      label: t.layer,
+      submenu: [
+        {
+          id: "layer.add",
+          label: t.addLayer,
+          click: commandClick(window, "layer.add"),
+        },
+        {
+          id: "layer.delete",
+          label: t.deleteLayer,
+          click: commandClick(window, "layer.delete"),
+        },
+        {
+          id: "layer.duplicate",
+          label: t.duplicateLayer,
+          click: commandClick(window, "layer.duplicate"),
+        },
+      ],
+    },
+    {
+      label: t.frame,
+      submenu: [
+        {
+          id: "frame.add",
+          label: t.addFrame,
+          accelerator: DEFAULT_KEYBINDINGS["frame.add"],
+          click: commandClick(window, "frame.add"),
+        },
+        {
+          id: "frame.duplicate",
+          label: t.duplicateFrame,
+          accelerator: DEFAULT_KEYBINDINGS["frame.duplicate"],
+          click: commandClick(window, "frame.duplicate"),
+        },
+        {
+          id: "frame.duplicateLinked",
+          label: t.duplicateLinkedFrame,
+          accelerator: DEFAULT_KEYBINDINGS["frame.duplicateLinked"],
+          click: commandClick(window, "frame.duplicateLinked"),
+        },
+        {
+          id: "frame.delete",
+          label: t.deleteFrame,
+          accelerator: DEFAULT_KEYBINDINGS["frame.delete"],
+          click: commandClick(window, "frame.delete"),
+        },
+        { type: "separator" },
+        {
+          id: "frame.previous",
+          label: t.previousFrame,
+          accelerator: DEFAULT_KEYBINDINGS["frame.previous"],
+          click: commandClick(window, "frame.previous"),
+        },
+        {
+          id: "frame.next",
+          label: t.nextFrame,
+          accelerator: DEFAULT_KEYBINDINGS["frame.next"],
+          click: commandClick(window, "frame.next"),
+        },
+        {
+          id: "frame.setDuration",
+          label: t.frameDuration,
+          click: commandClick(window, "frame.setDuration"),
+        },
+        { type: "separator" },
+        {
+          id: "cel.linkToPrevious",
+          label: t.linkCel,
+          click: commandClick(window, "cel.linkToPrevious"),
+        },
+        {
+          id: "cel.unlink",
+          label: t.unlinkCel,
+          click: commandClick(window, "cel.unlink"),
+        },
+        { type: "separator" },
+        {
+          id: "tag.add",
+          label: t.addTag,
+          accelerator: DEFAULT_KEYBINDINGS["tag.add"],
+          click: commandClick(window, "tag.add"),
+        },
+        {
+          id: "tag.edit",
+          label: t.editTag,
+          click: commandClick(window, "tag.edit"),
+        },
+        {
+          id: "tag.delete",
+          label: t.deleteTag,
+          click: commandClick(window, "tag.delete"),
+        },
+      ],
+    },
+    {
+      label: t.select,
+      submenu: [
+        {
+          id: "select.all",
+          label: t.selectAll,
+          accelerator: DEFAULT_KEYBINDINGS["select.all"],
+          click: commandClick(window, "select.all"),
+        },
+        {
+          id: "select.none",
+          label: t.deselect,
+          accelerator: DEFAULT_KEYBINDINGS["select.none"],
+          click: commandClick(window, "select.none"),
+        },
+      ],
+    },
+    {
+      label: t.view,
+      submenu: [
+        {
+          label: t.commandPalette,
+          accelerator: DEFAULT_KEYBINDINGS["view.commandPalette"],
+          click: commandClick(window, "view.commandPalette"),
+        },
+        { type: "separator" },
+        {
+          label: t.zoomIn,
+          accelerator: DEFAULT_KEYBINDINGS["view.zoomIn"],
+          click: commandClick(window, "view.zoomIn"),
+        },
+        {
+          label: t.zoomOut,
+          accelerator: DEFAULT_KEYBINDINGS["view.zoomOut"],
+          click: commandClick(window, "view.zoomOut"),
+        },
+        {
+          label: t.zoom100,
+          accelerator: DEFAULT_KEYBINDINGS["view.zoom100"],
+          click: commandClick(window, "view.zoom100"),
+        },
+        { label: t.zoomFit, click: commandClick(window, "view.zoomFit") },
+        { type: "separator" },
+        {
+          label: t.onionSkin,
+          accelerator: DEFAULT_KEYBINDINGS["animation.toggleOnionSkin"],
+          click: commandClick(window, "animation.toggleOnionSkin"),
+        },
+        {
+          label: t.onionSkinSettings,
+          click: commandClick(window, "animation.onionSkinSettings"),
+        },
+        {
+          label: t.timelineZoomIn,
+          click: commandClick(window, "timeline.zoomIn"),
+        },
+        {
+          label: t.timelineZoomOut,
+          click: commandClick(window, "timeline.zoomOut"),
+        },
+        { type: "separator" },
+        {
+          label: t.theme,
+          submenu: [
+            {
+              label: t.system,
+              type: "radio",
+              checked: true,
+              click: commandClick(window, "view.setThemeSystem"),
+            },
+            {
+              label: t.dark,
+              type: "radio",
+              click: commandClick(window, "view.setThemeDark"),
+            },
+            {
+              label: t.light,
+              type: "radio",
+              click: commandClick(window, "view.setThemeLight"),
+            },
+          ],
+        },
+        { type: "separator" },
+        {
+          label: t.resetLayout,
+          click: commandClick(window, "view.resetLayout"),
+        },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    {
+      label: t.window,
+      submenu: [
+        {
+          label: t.tools,
+          type: "checkbox",
+          checked: true,
+          click: commandClick(window, "window.toggleTools"),
+        },
+        {
+          label: t.layers,
+          type: "checkbox",
+          checked: true,
+          click: commandClick(window, "window.toggleLayers"),
+        },
+        {
+          label: t.timeline,
+          type: "checkbox",
+          checked: true,
+          click: commandClick(window, "window.toggleTimeline"),
+        },
+        { type: "separator" },
+        { role: "minimize" },
+        { role: "zoom" },
+      ],
+    },
+    {
+      label: t.plugins,
+      submenu: [
+        { id: "plugin.manage", label: t.managePlugins, click: commandClick(window, "plugin.manage") },
+        { id: "plugin.install", label: t.installPlugin, click: commandClick(window, "plugin.install") },
+        { type: "separator" },
+        { id: "plugin.disable", label: t.disableAllPlugins, click: commandClick(window, "plugin.disable") },
+        { id: "plugin.enterSafeMode", label: t.safeMode, click: commandClick(window, "plugin.enterSafeMode") },
+        { id: "plugin.restart", label: t.reloadPlugins, click: commandClick(window, "plugin.restart") },
+        { type: "separator" },
+        {
+          label: t.installedPluginCommands,
+          submenu: pluginCommands.length === 0
+            ? [{ label: t.unavailable, enabled: false }]
+            : pluginCommands.map((command) => ({
+                label: `${command.title} — ${command.pluginName}`,
+                click: () => {
+                  if (!window.isDestroyed())
+                    window.webContents.send(IPC_CHANNELS.pluginCommandInvoke, command.id);
+                },
+              })),
+        },
+      ],
+    },
+    {
+      label: t.help,
+      submenu: [{ label: t.about, click: commandClick(window, "help.about") }],
+    },
+  );
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}

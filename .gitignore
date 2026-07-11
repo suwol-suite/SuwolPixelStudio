@@ -1,0 +1,14 @@
+node_modules/
+.vite/
+out/
+coverage/
+playwright-report/
+test-results/
+artifacts/plugins/
+.plugin-dev/
+plugin-data/
+plugin-logs/
+*.suwolplugin
+*.log
+.DS_Store
+Thumbs.db
