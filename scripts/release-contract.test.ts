@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   expectedReleaseAssets,
   isPrereleaseVersion,
+  normalizeZipEntryName,
   validateReleaseTag,
   verifyReleaseChecksums,
   writeReleaseChecksums,
@@ -35,6 +36,13 @@ describe("release contract", () => {
     expect(expectedReleaseAssets("0.6.0-rc.1", "core")).toContain(
       "SuwolPixelStudio-0.6.0-rc.1-linux-x64.AppImage",
     );
+  });
+  it("normalizes Windows ZIP separators without allowing path traversal", () => {
+    expect(normalizeZipEntryName("Suwol Pixel Studio\\SuwolPixelStudio.exe")).toBe(
+      "Suwol Pixel Studio/SuwolPixelStudio.exe",
+    );
+    for (const name of ["..\\escape.exe", "folder/../escape", "C:\\escape.exe", "/escape.exe"])
+      expect(() => normalizeZipEntryName(name)).toThrow(/unsafe path/);
   });
   it("generates sorted checksums and detects a changed asset", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "suwol-release-"));

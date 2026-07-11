@@ -107,11 +107,21 @@ function hasSuffix(entries: readonly ZipEntry[], suffix: string): boolean {
   return entries.some(({ name }) => name.endsWith(suffix));
 }
 
-async function validateZip(file: string, platform: "win" | "linux" | "mac"): Promise<void> {
-  const entries = await zipEntries(file);
-  if (entries.length === 0) throw new Error(`ZIP is empty: ${path.basename(file)}`);
-  if (entries.some(({ name }) => name.startsWith("/") || name.includes("../") || name.includes("\\")))
+export function normalizeZipEntryName(name: string): string {
+  const normalized = name.replaceAll("\\", "/"), segments = normalized.split("/");
+  if (
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:/.test(normalized) ||
+    normalized.includes("\0") ||
+    segments.includes("..")
+  )
     throw new Error("ZIP contains an unsafe path.");
+  return normalized;
+}
+
+async function validateZip(file: string, platform: "win" | "linux" | "mac"): Promise<void> {
+  const entries = (await zipEntries(file)).map((entry) => ({ ...entry, name: normalizeZipEntryName(entry.name) }));
+  if (entries.length === 0) throw new Error(`ZIP is empty: ${path.basename(file)}`);
   if (platform === "win") {
     const executable = entries.find(({ name }) => name.endsWith("/SuwolPixelStudio.exe"));
     if (executable === undefined || !hasSuffix(entries, "/resources/app.asar"))

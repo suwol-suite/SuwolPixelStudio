@@ -1,6 +1,6 @@
 # Known limitations
 
-- Release version is 0.6.0-rc.2; 1.0.0, tag, and public stable release require a separate decision.
+- Release version is 0.6.0-rc.3; 1.0.0, tag, and public stable release require a separate decision.
 - Windows artifacts are unsigned ZIP files and may trigger reputation warnings.
 - The portable Windows ZIP cannot register a `.suwolpixel` file icon or shell association without an installer/registry mutation; both remain intentionally disabled.
 - macOS signing, notarization, stapling, and Gatekeeper verification depend on secrets and must be confirmed on CI output.

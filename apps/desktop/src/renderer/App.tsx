@@ -408,7 +408,7 @@ export function App() {
     try {
       const bytes = await serializeSuwolPixelAsync(
         snapshot,
-        desktopInfo?.version ?? "0.6.0-rc.2",
+        desktopInfo?.version ?? "0.6.0-rc.3",
       );
       await api.files.writeAtomic(handle, toArrayBuffer(bytes));
       entry.session.markSaved(revision);
@@ -2184,7 +2184,7 @@ export function App() {
       for (const entry of dirty) {
         const snapshot = entry.session.snapshot(),
           revision = snapshot.model.revision;
-        void serializeSuwolPixelAsync(snapshot, desktopInfo?.version ?? "0.6.0-rc.2")
+        void serializeSuwolPixelAsync(snapshot, desktopInfo?.version ?? "0.6.0-rc.3")
           .then(async (data) => {
             let thumbnail: ArrayBuffer | undefined;
             try {

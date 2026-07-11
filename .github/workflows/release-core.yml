@@ -88,7 +88,7 @@ jobs:
           echo "APPIMAGE_RUNTIME=$runtime" >> "$GITHUB_ENV"
       - name: Build Linux ZIP and AppImage
         run: |
-          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_TAG")"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "${RELEASE_TAG}^{commit}")"
           echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >> "$GITHUB_ENV"
           pnpm make --arch=x64
       - name: Prepare and validate Linux assets
