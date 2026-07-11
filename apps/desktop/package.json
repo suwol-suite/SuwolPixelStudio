@@ -8,7 +8,7 @@
     "@suwol/file-format": "workspace:0.0.0",
     "@suwol/pixel-renderer": "workspace:0.0.0",
     "@suwol/plugin-api": "workspace:1.1.0",
-    "@suwol/plugin-host": "workspace:0.6.0-rc.5",
+    "@suwol/plugin-host": "workspace:0.6.0-rc.6",
     "@suwol/shared": "workspace:0.0.0",
     "@suwol/ui": "workspace:0.0.0",
     "fast-png": "8.0.0",

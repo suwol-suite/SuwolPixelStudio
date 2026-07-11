@@ -103,9 +103,14 @@ async function zipEntries(file: string): Promise<readonly ZipEntry[]> {
   } finally { await handle.close(); }
 }
 
+export function zipEntryHasSuffix(name: string, suffix: string): boolean {
+  if (!suffix.startsWith("/")) return name.endsWith(suffix);
+  const relative = suffix.slice(1);
+  return name === relative || name.endsWith(`/${relative}`);
+}
+
 function hasSuffix(entries: readonly ZipEntry[], suffix: string): boolean {
-  const relative = suffix.startsWith("/") ? suffix.slice(1) : suffix;
-  return entries.some(({ name }) => name === relative || name.endsWith(`/${relative}`));
+  return entries.some(({ name }) => zipEntryHasSuffix(name, suffix));
 }
 
 export function normalizeZipEntryName(name: string): string {

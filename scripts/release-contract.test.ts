@@ -9,6 +9,7 @@ import {
   validateReleaseTag,
   verifyReleaseChecksums,
   writeReleaseChecksums,
+  zipEntryHasSuffix,
 } from "./release-contract";
 
 const temporary: string[] = [];
@@ -43,6 +44,16 @@ describe("release contract", () => {
     );
     for (const name of ["..\\escape.exe", "folder/../escape", "C:\\escape.exe", "/escape.exe"])
       expect(() => normalizeZipEntryName(name)).toThrow(/unsafe path/);
+  });
+  it("matches root-level resources and macOS app bundle suffixes", () => {
+    expect(zipEntryHasSuffix("resources/app.asar", "/resources/app.asar")).toBe(true);
+    expect(zipEntryHasSuffix("Suwol/resources/app.asar", "/resources/app.asar")).toBe(true);
+    expect(
+      zipEntryHasSuffix(
+        "Suwol Pixel Studio.app/Contents/MacOS/SuwolPixelStudio",
+        ".app/Contents/MacOS/SuwolPixelStudio",
+      ),
+    ).toBe(true);
   });
   it("generates sorted checksums and detects a changed asset", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "suwol-release-"));
