@@ -39,6 +39,7 @@ requireText(mac, [
   "chmod +x artifacts/final/SuwolPixelStudio-*-linux-x64.AppImage",
 ], "release-macos.yml");
 requireText(ci, ["pnpm install --frozen-lockfile", "pnpm workflow:check", "pnpm package:smoke"], "ci.yml");
+if (ci.includes("22.12.0")) throw new Error("CI must use a Node version compatible with pnpm 11.11.0.");
 if (core.includes("CSC_LINK") || core.includes("APPLE_ID")) throw new Error("Windows/Linux core release must not require macOS secrets.");
 if (mac.includes("gh release create")) throw new Error("macOS workflow must not create a Release.");
 console.log("workflow release contracts are consistent");

@@ -1,6 +1,6 @@
 # Suwol Pixel Studio
 
-Suwol Pixel Studio is a byte-exact desktop pixel editor built with Electron, React, and TypeScript. The current implementation is **v0.6.0-rc.6 / M6 — 1.0 Release Readiness**.
+Suwol Pixel Studio is a byte-exact desktop pixel editor built with Electron, React, and TypeScript. The current implementation is **v0.6.0-rc.7 / M6 — 1.0 Release Readiness**.
 
 ## M6 focus
 
