@@ -1015,35 +1015,6 @@ export function EditorShell({
               </div>
             ))}
         </div>
-        <div className="workspace-actions">
-          <IconButton
-            label={t("toolbar.toggleTools")}
-            icon="tools"
-            pressed={layout.toolsVisible}
-            testId="toggle-tools"
-            onClick={() => {
-              void commands.execute("window.toggleTools");
-            }}
-          />
-          <IconButton
-            label={t("toolbar.toggleRightDock")}
-            description={t("tooltip.dock.toggle")}
-            icon="layers"
-            pressed={right}
-            testId="toggle-right-dock"
-            onClick={() => {
-              void commands.execute("window.toggleRightDock");
-            }}
-          />
-          <IconButton
-            label={t("toolbar.commands")}
-            icon="command"
-            testId="open-command-palette"
-            onClick={() => {
-              void commands.execute("view.commandPalette");
-            }}
-          />
-        </div>
       </header>
       <main className="workspace-main">
         {layout.toolsVisible && (
@@ -1089,11 +1060,6 @@ export function EditorShell({
         {active === null ? (
           <section className="canvas-workspace">
             <div className="empty-state">
-              <div className="empty-state-icon">
-                <Icon name="app" />
-              </div>
-              <h1>{t("empty.title")}</h1>
-              <p>{t("empty.description.m2")}</p>
               <button
                 type="button"
                 data-testid="empty-new"
@@ -1103,6 +1069,16 @@ export function EditorShell({
               >
                 <Icon name="add" />
                 {t("new.title")}
+              </button>
+              <button
+                type="button"
+                data-testid="empty-open"
+                onClick={() => {
+                  void commands.execute("file.open");
+                }}
+              >
+                <Icon name="document" />
+                {t("command.file.open")}
               </button>
             </div>
           </section>

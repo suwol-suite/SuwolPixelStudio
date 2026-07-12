@@ -94,6 +94,18 @@ const api: SuwolDesktopApi = Object.freeze({
       );
       unwrap(response, parseVoid);
     },
+    async relaunchWithoutPlugins() {
+      const response: unknown = await ipcRenderer.invoke(
+        IPC_CHANNELS.appRelaunchWithoutPlugins,
+      );
+      unwrap(response, parseVoid);
+    },
+    async reportRendererFailure() {
+      const response: unknown = await ipcRenderer.invoke(
+        IPC_CHANNELS.appReportRendererFailure,
+      );
+      unwrap(response, parseVoid);
+    },
   }),
   shell: Object.freeze({
     async openExternal(url: string): Promise<void> {

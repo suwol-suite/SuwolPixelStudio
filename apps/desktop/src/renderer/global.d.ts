@@ -9,10 +9,13 @@ declare global {
       getActiveFrameHash(): string | null;
       getPaletteSize(): number;
       getCanvasSize(): Readonly<{ width: number; height: number }> | null;
+      getActivePixel(x: number, y: number): readonly number[] | null;
       getViewport(): Readonly<{
         panX: number;
         panY: number;
         zoom: number;
+        viewportWidth: number;
+        viewportHeight: number;
       }> | null;
       getWorkspaceLayout(): WorkspaceLayout;
       getAnimationState(): Readonly<{

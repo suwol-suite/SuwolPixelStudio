@@ -10,7 +10,7 @@ const root = JSON.parse(readFileSync("package.json", "utf8")) as Readonly<{
 
 describe("M6 release metadata", () => {
   it("keeps version, license and release scripts consistent", () => {
-    expect(root.version).toBe("1.0.1-rc.1");
+    expect(root.version).toBe("1.0.1-rc.2");
     expect(root.license).toBe("Apache-2.0");
     expect(typeof root.scripts["package:smoke"]).toBe("string");
     expect(typeof root.scripts["release:prepare"]).toBe("string");
@@ -18,12 +18,12 @@ describe("M6 release metadata", () => {
     expect(typeof root.scripts["release:verify-tag"]).toBe("string");
     expect(typeof root.scripts["workflow:check"]).toBe("string");
     expect(typeof root.scripts["license:check"]).toBe("string");
-    expect(readFileSync("README.md", "utf8")).toContain("v1.0.1-rc.1 / RC9");
+    expect(readFileSync("README.md", "utf8")).toContain("v1.0.1-rc.2 / RC10");
   });
   it("validates privacy-safe diagnostic metadata", () => {
     const info = appDiagnosticsSchema.parse({
       productName: "Suwol Pixel Studio",
-      version: "1.0.1-rc.1",
+      version: "1.0.1-rc.2",
       electron: "43.1.0",
       chromium: "142.0.0.0",
       node: "22.12.0",

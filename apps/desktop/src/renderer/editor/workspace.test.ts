@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EditorSession } from "@suwol/editor-core";
+import { encodePng, importPng } from "@suwol/file-format";
 import { WorkspaceStore } from "./workspace";
 
 describe("WorkspaceStore document identity", () => {
@@ -43,5 +44,29 @@ describe("WorkspaceStore document identity", () => {
     expect(workspace.active?.view.viewport).toMatchObject({ zoom: 2, panX: 80 });
     expect(workspace.reorder(second.id, 0)).toBe(true);
     expect(workspace.documents.map(({ id }) => id)).toEqual([second.id, first.id]);
+  });
+  it("activates an imported PNG and schedules its first fit", () => {
+    const workspace = new WorkspaceStore();
+    workspace.add(EditorSession.create({
+      name: "Existing",
+      layerName: "Layer",
+      width: 8,
+      height: 8,
+    }));
+    const imported = workspace.add(
+      importPng(
+        "asymmetric",
+        encodePng(16, 12, new Uint8Array(16 * 12 * 4)),
+        "Layer 1",
+      ),
+      "png",
+    );
+    expect(workspace.active).toBe(imported);
+    expect(imported.sourceKind).toBe("png");
+    expect(imported.view.fitPending).toBe(true);
+    expect(imported.view.viewport).toMatchObject({
+      documentWidth: 16,
+      documentHeight: 12,
+    });
   });
 });

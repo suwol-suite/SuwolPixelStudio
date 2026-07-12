@@ -113,6 +113,22 @@ export function registerIpcHandlers(
       return internalError<null>(logger, "app.copyDiagnostics");
     }
   });
+  ipcMain.handle(IPC_CHANNELS.appRelaunchWithoutPlugins, () => {
+    try {
+      const args = process.argv
+        .slice(1)
+        .filter((argument) => argument !== "--disable-plugins");
+      app.relaunch({ args: [...args, "--disable-plugins"] });
+      setTimeout(() => app.exit(0), 100);
+      return success(null);
+    } catch {
+      return internalError<null>(logger, "app.relaunchWithoutPlugins");
+    }
+  });
+  ipcMain.handle(IPC_CHANNELS.appReportRendererFailure, () => {
+    logger.error("Renderer reported a fatal workspace initialization failure.");
+    return success(null);
+  });
 
   ipcMain.handle(
     IPC_CHANNELS.shellOpenExternal,

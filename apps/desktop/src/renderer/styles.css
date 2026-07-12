@@ -197,12 +197,6 @@ svg {
 .tab-close:hover {
   background: var(--hover);
 }
-.workspace-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.15rem;
-  padding: 0 0.3rem;
-}
 .icon-button {
   display: inline-grid;
   place-items: center;
@@ -324,56 +318,20 @@ svg {
   cursor: crosshair;
 }
 .empty-state {
-  max-width: 32rem;
-  padding: 2rem;
-  text-align: center;
-}
-.empty-state-icon {
-  display: grid;
-  place-items: center;
-  width: 4.25rem;
-  height: 4.25rem;
-  margin: 0 auto 1rem;
-  color: var(--accent);
-  background: var(--elevated-bg);
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  box-shadow: 0 0.6rem 2rem color-mix(in srgb, #000 12%, transparent);
-}
-.empty-state-icon svg {
-  width: 2rem;
-  height: 2rem;
-}
-.empty-state h1 {
-  margin: 0 0 0.55rem;
-  font-size: 1.25rem;
-  font-weight: 650;
-}
-.empty-state p {
-  margin: 0 auto 0.6rem;
-  line-height: 1.55;
-  color: var(--text-muted);
-}
-.empty-state small {
-  display: block;
-  line-height: 1.45;
-  color: var(--text-muted);
+  display: flex;
+  gap: 0.6rem;
 }
 .empty-state button {
   display: inline-flex;
   align-items: center;
   gap: 0.55rem;
-  margin-top: 1.2rem;
   padding: 0 0.75rem;
 }
-.empty-state kbd {
-  margin-left: 0.5rem;
-  padding: 0.08rem 0.32rem;
-  color: var(--text-muted);
-  font: 0.78rem/1.4 inherit;
-  background: var(--control-bg);
-  border: 1px solid var(--border);
-  border-radius: 0.2rem;
+
+.fatal-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
 }
 
 .inspector {

@@ -36,6 +36,7 @@ import {
   removeUnusedPaletteEntries,
   reorderSessionPalette,
   remapSessionPalette,
+  readCompositePixel,
   setLayerBlendMode,
   sortPalette,
   type BlendMode,
@@ -148,8 +149,11 @@ const logger = createLogger("renderer", import.meta.env.DEV),
     ) as ArrayBuffer;
 function loadInitialSettings(): AppSettings {
   try {
-    return deserializeSettings(localStorage.getItem(SETTINGS_STORAGE_KEY));
+    const settings = deserializeSettings(localStorage.getItem(SETTINGS_STORAGE_KEY));
+    logger.info("Workspace layout restore completed.");
+    return settings;
   } catch {
+    logger.warn("Workspace layout restore failed; defaults are active.");
     return DEFAULT_SETTINGS;
   }
 }
@@ -178,6 +182,11 @@ function createPanels(settings: AppSettings) {
 }
 
 export function App() {
+  if (
+    __SUWOL_E2E__ &&
+    new URLSearchParams(globalThis.location.search).get("fatal") === "1"
+  )
+    throw new Error("Intentional E2E renderer initialization failure.");
   const [settings, setSettings] = useState(loadInitialSettings),
     settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -456,7 +465,7 @@ export function App() {
     try {
       const bytes = await serializeSuwolPixelAsync(
         snapshot,
-        desktopInfo?.version ?? "1.0.1-rc.1",
+        desktopInfo?.version ?? "1.0.1-rc.2",
       );
       await api.files.writeAtomic(handle, toArrayBuffer(bytes));
       entry.session.markSaved(revision);
@@ -505,7 +514,13 @@ export function App() {
               result.handle,
             );
       entry.lastSavedAt = Date.now();
+      logger.info(
+        lower.endsWith(".png")
+          ? "PNG document decode and import completed."
+          : "Suwol document import completed.",
+      );
     } catch {
+      logger.warn("Document import failed.");
       setMessage(tRef.current("error.fileOpen"));
     }
   }
@@ -2244,6 +2259,7 @@ export function App() {
       setMessage(tRef.current("error.desktopApi"));
       return;
     }
+    logger.info("Renderer boot completed.");
     const unsubscribe = api.commands.onInvoke((id) => {
       void commands.execute(id);
     });
@@ -2274,7 +2290,7 @@ export function App() {
       for (const entry of dirty) {
         const snapshot = entry.session.snapshot(),
           revision = snapshot.model.revision;
-        void serializeSuwolPixelAsync(snapshot, desktopInfo?.version ?? "1.0.1-rc.1")
+        void serializeSuwolPixelAsync(snapshot, desktopInfo?.version ?? "1.0.1-rc.2")
           .then(async (data) => {
             let thumbnail: ArrayBuffer | undefined;
             try {
@@ -2398,6 +2414,12 @@ export function App() {
                 width: workspace.active.session.model.canvas.width,
                 height: workspace.active.session.model.canvas.height,
               },
+        getActivePixel: (x: number, y: number) => {
+          const entry = workspace.active;
+          if (entry === null || !Number.isInteger(x) || !Number.isInteger(y))
+            return null;
+          return readCompositePixel(entry.session, x, y);
+        },
         getViewport: () =>
           workspace.active === null
             ? null
@@ -2405,6 +2427,8 @@ export function App() {
                 panX: workspace.active.view.viewport.panX,
                 panY: workspace.active.view.viewport.panY,
                 zoom: workspace.active.view.viewport.zoom,
+                viewportWidth: workspace.active.view.viewport.viewportWidth,
+                viewportHeight: workspace.active.view.viewport.viewportHeight,
               },
         getWorkspaceLayout: () => structuredClone(settingsRef.current.workspaceLayout),
         getAnimationState: () => {

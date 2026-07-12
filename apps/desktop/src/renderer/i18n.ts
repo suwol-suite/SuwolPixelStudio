@@ -6,11 +6,6 @@ const en = {
   "tabs.documents": "Open documents",
   "tabs.documentIcon": "Document",
   "tooltip.documentTab": "Switch to this open document. Drag to reorder tabs.",
-  "empty.title": "No document open",
-  "empty.description":
-    "Create, edit, animate, and export pixel art in the release-candidate workspace.",
-  "empty.hint":
-    "Use the command palette to explore available workspace commands.",
   "panel.tools": "Tools",
   "panel.layers": "Layers",
   "panel.palette": "Palette",
@@ -90,7 +85,7 @@ const en = {
   "about.title": "About Suwol Pixel Studio",
   "about.description":
     "A modern, secure desktop workspace for pixel art creation.",
-  "about.scope": "Current milestone: M6 — 1.0 release readiness",
+  "about.scope": "Current milestone: RC10 — real-world blocker fixes",
   "about.version": "Version",
   "about.platform": "Platform",
   "about.runtime": "Runtime",
@@ -104,8 +99,11 @@ const en = {
   "dialog.close": "Close",
   "error.title": "The workspace could not start",
   "error.description":
-    "Reload the window to try again. No document data was changed.",
+    "Choose a recovery action below. No document or recovery data was changed.",
   "error.reload": "Reload window",
+  "error.resetWorkspace": "Reset workspace and reload",
+  "error.restartWithoutPlugins": "Restart without plugins",
+  "error.openLogs": "Open logs folder",
   "error.desktopApi": "The secure desktop service is unavailable.",
   "category.file": "File",
   "category.edit": "Edit",
@@ -141,7 +139,6 @@ const en = {
   "layout.showPanel": "Show Panel",
   "layout.hidePanel": "Hide Panel",
   "command.help.about": "About Suwol Pixel Studio",
-  "empty.description.m1": "Create a 64×64 RGBA document to begin drawing.",
   "canvas.label": "Pixel canvas",
   "document.defaultName": "Untitled",
   "new.title": "New Document",
@@ -205,8 +202,6 @@ const en = {
   "tooltip.layer.mergeDown": "Merge the selected layer into the layer below.",
   "timeline.close": "Close Timeline",
   "tooltip.timeline.close": "Hide Timeline and expand the canvas workspace.",
-  "empty.description.m2":
-    "Create an RGBA document and use the complete static editing toolkit.",
   "tool.fill": "Fill",
   "tool.line": "Line",
   "tool.rectangle": "Rectangle",
@@ -633,11 +628,6 @@ const ko: Record<TranslationKey, string> = {
   "tabs.documents": "열린 문서",
   "tabs.documentIcon": "문서",
   "tooltip.documentTab": "열린 문서로 전환합니다. 드래그해서 탭 순서를 바꿀 수 있습니다.",
-  "empty.title": "열린 문서가 없습니다",
-  "empty.description":
-    "출시 후보 작업 공간에서 픽셀 아트를 만들고 편집·애니메이션·내보내기할 수 있습니다.",
-  "empty.hint":
-    "명령 팔레트에서 현재 사용할 수 있는 작업 공간 명령을 확인하세요.",
   "panel.tools": "도구",
   "panel.layers": "레이어",
   "panel.palette": "팔레트",
@@ -717,7 +707,7 @@ const ko: Record<TranslationKey, string> = {
   "about.title": "Suwol Pixel Studio 정보",
   "about.description":
     "픽셀 아트 제작을 위한 현대적이고 안전한 데스크톱 작업 공간입니다.",
-  "about.scope": "현재 마일스톤: M6 — 1.0 출시 준비",
+  "about.scope": "현재 마일스톤: RC10 — 실사용 차단 버그 수정",
   "about.version": "버전",
   "about.platform": "플랫폼",
   "about.runtime": "런타임",
@@ -731,8 +721,11 @@ const ko: Record<TranslationKey, string> = {
   "dialog.close": "닫기",
   "error.title": "작업 공간을 시작하지 못했습니다",
   "error.description":
-    "창을 다시 불러오세요. 문서 데이터는 변경되지 않았습니다.",
+    "아래에서 복구 작업을 선택하세요. 문서와 복구 데이터는 변경되지 않았습니다.",
   "error.reload": "창 다시 불러오기",
+  "error.resetWorkspace": "작업 공간 초기화 후 다시 열기",
+  "error.restartWithoutPlugins": "플러그인 없이 다시 시작",
+  "error.openLogs": "로그 폴더 열기",
   "error.desktopApi": "안전한 데스크톱 서비스를 사용할 수 없습니다.",
   "category.file": "파일",
   "category.edit": "편집",
@@ -768,7 +761,6 @@ const ko: Record<TranslationKey, string> = {
   "layout.showPanel": "패널 표시",
   "layout.hidePanel": "패널 숨기기",
   "command.help.about": "Suwol Pixel Studio 정보",
-  "empty.description.m1": "64×64 RGBA 문서를 만들어 그리기를 시작하세요.",
   "canvas.label": "픽셀 캔버스",
   "document.defaultName": "제목 없음",
   "new.title": "새 문서",
@@ -831,8 +823,6 @@ const ko: Record<TranslationKey, string> = {
   "tooltip.layer.mergeDown": "선택한 레이어를 아래 레이어와 병합합니다.",
   "timeline.close": "타임라인 닫기",
   "tooltip.timeline.close": "타임라인을 숨기고 캔버스 작업 영역을 확장합니다.",
-  "empty.description.m2":
-    "RGBA 문서를 만들고 완성된 정적 편집 도구를 사용하세요.",
   "tool.fill": "채우기",
   "tool.line": "선",
   "tool.rectangle": "사각형",

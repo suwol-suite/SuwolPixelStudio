@@ -1,6 +1,7 @@
 import { app, BrowserWindow, protocol } from "electron";
+import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { createLogger } from "@suwol/shared";
+import { createLogger, type Logger } from "@suwol/shared";
 import { registerIpcHandlers } from "./ipc";
 import { SecureFileService } from "./files";
 import { installApplicationMenu } from "./menu";
@@ -32,7 +33,45 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-const logger = createLogger("main", !app.isPackaged);
+function createMainLogger(): Logger {
+  const consoleLogger = createLogger("main", !app.isPackaged);
+  let logFile: string | null = null;
+  try {
+    app.setAppLogsPath();
+    const directory = app.getPath("logs");
+    mkdirSync(directory, { recursive: true });
+    logFile = path.join(directory, "suwol-pixel-studio.log");
+  } catch {
+    consoleLogger.error("Application log file initialization failed.");
+  }
+  const write = (level: "INFO" | "WARN" | "ERROR", message: string): void => {
+    if (logFile !== null)
+      try {
+        appendFileSync(logFile, `${new Date().toISOString()} ${level} ${message}\n`, {
+          encoding: "utf8",
+        });
+      } catch {
+        logFile = null;
+        consoleLogger.error("Application log file write failed.");
+      }
+  };
+  return Object.freeze({
+    info(message: string) {
+      consoleLogger.info(message);
+      write("INFO", message);
+    },
+    warn(message: string) {
+      consoleLogger.warn(message);
+      write("WARN", message);
+    },
+    error(message: string) {
+      consoleLogger.error(message);
+      write("ERROR", message);
+    },
+  });
+}
+
+const logger = createMainLogger();
 let fileService: SecureFileService | null = null;
 let pluginService: PluginDesktopService | null = null;
 
@@ -70,8 +109,15 @@ async function createMainWindow(): Promise<BrowserWindow> {
   let targetUrl = app.isPackaged
     ? "suwol-pixel://app/index.html"
     : developmentUrl;
-  if (__SUWOL_E2E__ && process.argv.includes("--force-canvas2d"))
-    targetUrl += "?renderer=canvas2d";
+  if (__SUWOL_E2E__) {
+    const parameters = new URLSearchParams();
+    if (process.argv.includes("--force-canvas2d"))
+      parameters.set("renderer", "canvas2d");
+    if (process.argv.includes("--force-renderer-failure"))
+      parameters.set("fatal", "1");
+    const query = parameters.toString();
+    if (query !== "") targetUrl += `?${query}`;
+  }
   secureWindowNavigation(window, new URL(targetUrl).origin);
   window.webContents.on("did-fail-load", (_event, errorCode) => {
     logger.error(`Renderer load failed with code ${errorCode}.`);

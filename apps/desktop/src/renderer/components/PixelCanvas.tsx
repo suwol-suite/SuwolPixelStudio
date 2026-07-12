@@ -24,7 +24,14 @@ import {
   type Rgba,
   type StrokeTransaction,
 } from "@suwol/editor-core";
-import { PixelRenderer, drawDeclarativeOverlays, drawEditorOverlay } from "@suwol/pixel-renderer";
+import {
+  PixelRenderer,
+  canvasLocalToDocument,
+  canvasLocalToPixel,
+  clientToCanvasLocal,
+  drawDeclarativeOverlays,
+  drawEditorOverlay,
+} from "@suwol/pixel-renderer";
 import {
   PLUGIN_LIMITS,
   type OverlayUpdate,
@@ -213,19 +220,21 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     readonly clientX: number;
     readonly clientY: number;
   }): IntPoint {
-    const rect = event.currentTarget.getBoundingClientRect();
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    return clientToCanvasLocal(
+      { x: event.clientX, y: event.clientY },
+      event.currentTarget.getBoundingClientRect(),
+    );
   }
   function rawPixelPoint(
     event: React.PointerEvent<HTMLCanvasElement>,
   ): IntPoint {
-    const point = entry.view.viewport.screenToDocument(canvasPoint(event));
+    const point = canvasLocalToDocument(canvasPoint(event), entry.view.viewport);
     return { x: Math.floor(point.x), y: Math.floor(point.y) };
   }
   function pixelPoint(
     event: React.PointerEvent<HTMLCanvasElement>,
   ): IntPoint | null {
-    return entry.view.viewport.screenToPixel(canvasPoint(event));
+    return canvasLocalToPixel(canvasPoint(event), entry.view.viewport);
   }
   function tilePoint(point: IntPoint): Readonly<{ x: number; y: number }> | null {
     const layer = entry.session.model.layers[entry.view.activeLayerId];
@@ -460,9 +469,11 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     const canvas = canvasRef.current,
       overlay = overlayRef.current;
     if (canvas === null || overlay === null) return;
-    const renderer = new PixelRenderer(canvas, (message) =>
-      logger.warn(message),
-    );
+    const renderer = new PixelRenderer(canvas, (message) => {
+      if (message.includes("unavailable") || message.includes("lost"))
+        logger.warn(message);
+      else logger.info(message);
+    });
     if (__SUWOL_E2E__) overlay.dataset.rendererMode = renderer.mode;
     rendererRef.current = renderer;
     const resize = () => {
@@ -475,14 +486,18 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     };
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
+    observer.observe(overlay);
+    if (canvas.parentElement !== null) observer.observe(canvas.parentElement);
     window.addEventListener("resize", resize);
     window.visualViewport?.addEventListener("resize", resize);
     const wheel = (event: WheelEvent): void => {
       event.preventDefault();
-      const rect = overlay.getBoundingClientRect();
       entry.view.viewport.setZoomAt(
         entry.view.viewport.zoom * (event.deltaY < 0 ? 1.25 : 0.8),
-        { x: event.clientX - rect.left, y: event.clientY - rect.top },
+        clientToCanvasLocal(
+          { x: event.clientX, y: event.clientY },
+          overlay.getBoundingClientRect(),
+        ),
       );
       refresh();
     };

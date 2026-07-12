@@ -8,6 +8,30 @@ import {
   type Page,
 } from "@playwright/test";
 import { unzipSync } from "fflate";
+import { decode, encode } from "fast-png";
+
+function asymmetricPngFixture(): { readonly bytes: Uint8Array; readonly rgba: Uint8Array } {
+  const width = 16,
+    height = 16,
+    rgba = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y += 1)
+    for (let x = 0; x < width; x += 1)
+      rgba.set([x * 13, y * 11, (x * 17 + y * 7) % 256, 255], (y * width + x) * 4);
+  const mark = (x: number, y: number): void => rgba.set([0, 0, 0, 255], (y * width + x) * 4);
+  for (let x = 5; x <= 9; x += 1) mark(x, 1);
+  for (let y = 1; y <= 4; y += 1) mark(7, y);
+  for (let y = 5; y <= 10; y += 1) mark(1, y);
+  for (let x = 1; x <= 4; x += 1) mark(x, 10);
+  mark(12, 6);
+  rgba.set([255, 0, 0, 255], 0);
+  rgba.set([0, 255, 0, 255], (width - 1) * 4);
+  rgba.set([0, 0, 255, 255], (height - 1) * width * 4);
+  rgba.set([255, 255, 0, 255], (width * height - 1) * 4);
+  return {
+    rgba,
+    bytes: encode({ width, height, data: rgba, depth: 8, channels: 4 }),
+  };
+}
 
 function findExecutable(directory: string): string | null {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -74,7 +98,7 @@ async function waitForWorkspace(
   return page;
 }
 async function executePalette(page: Page, query: string): Promise<void> {
-  await page.getByTestId("open-command-palette").click();
+  await page.evaluate(async () => window.suwolTest?.executeCommand("view.commandPalette"));
   const search = page.getByRole("searchbox");
   await search.fill(query);
   await search.press("Enter");
@@ -85,6 +109,41 @@ async function artifactBytes(page: Page, fileName: string): Promise<Uint8Array |
     return data === null || data === undefined ? null : [...new Uint8Array(data)];
   }, fileName);
   return values === null ? null : Uint8Array.from(values);
+}
+
+async function expectActivePixel(
+  page: Page,
+  x: number,
+  y: number,
+  expected: readonly number[],
+): Promise<void> {
+  await expect
+    .poll(() => page.evaluate(([px, py]) => window.suwolTest?.getActivePixel(px, py) ?? null, [x, y] as const))
+    .toEqual(expected);
+}
+
+async function expectRenderedPixel(
+  page: Page,
+  x: number,
+  y: number,
+  expected: readonly number[],
+): Promise<void> {
+  const host = page.getByTestId("pixel-canvas-host"),
+    box = await host.boundingBox(),
+    viewport = await page.evaluate(() => window.suwolTest?.getViewport() ?? null),
+    pageSize = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  if (box === null || viewport === null)
+    throw new Error("Rendered viewport is unavailable.");
+  const shot = decode(await page.screenshot()),
+    scaleX = shot.width / pageSize.width,
+    scaleY = shot.height / pageSize.height,
+    sampleX = Math.max(0, Math.min(shot.width - 1, Math.floor((box.x + viewport.panX + (x + 0.5) * viewport.zoom) * scaleX))),
+    sampleY = Math.max(0, Math.min(shot.height - 1, Math.floor((box.y + viewport.panY + (y + 0.5) * viewport.zoom) * scaleY))),
+    offset = (sampleY * shot.width + sampleX) * shot.channels,
+    actual = shot.channels === 4
+      ? Array.from(shot.data.slice(offset, offset + 4))
+      : [...shot.data.slice(offset, offset + 3), 255];
+  expect(actual).toEqual(expected);
 }
 
 function minimalAseprite(): Uint8Array {
@@ -191,6 +250,8 @@ test("packaged M2 editor tools, transforms, palette, round-trip and recovery", a
         "getDiagnostics",
         "openLogsFolder",
         "copyDiagnostics",
+        "relaunchWithoutPlugins",
+        "reportRendererFailure",
       ],
       shell: ["openExternal"],
       commands: ["onInvoke", "updateState"],
@@ -349,9 +410,7 @@ test("packaged M2 editor tools, transforms, palette, round-trip and recovery", a
         fileName: "m2-export.png",
       });
     });
-    await page.getByTestId("open-command-palette").click();
-    await page.getByRole("searchbox").fill("PNG");
-    await page.getByRole("searchbox").press("Enter");
+    await executePalette(page, "PNG");
     await expect
       .poll(() =>
         page.evaluate(async () => {
@@ -865,7 +924,7 @@ test("packaged M6 Canvas2D, diagnostics, localization and keyboard accessibility
     await expect(page.getByTestId("pixel-canvas")).toHaveAttribute("data-renderer-mode", "canvas2d");
     await page.evaluate(async () => window.suwolTest?.executeCommand("help.about"));
     const about = page.getByRole("dialog", { name: "About Suwol Pixel Studio" });
-    await expect(about).toContainText("1.0.1-rc.1");
+    await expect(about).toContainText("1.0.1-rc.2");
     await expect(about).toContainText("Plugin API 1.1.0");
     await expect(about).toContainText("Apache-2.0");
     const aboutIcon = about.locator(".about-mark img");
@@ -1085,8 +1144,8 @@ test("packaged RC9 dock workspace, RC8 canvas UX and responsive layouts", async 
     expect(iconMetadata.length).toBeGreaterThan(10);
     expect(iconMetadata.every(({ label, description }) => Boolean(label && description))).toBe(true);
     await page.keyboard.press("Escape");
-    await page.getByTestId("open-command-palette").focus();
-    const edgeTooltip = page.getByRole("tooltip", { name: /Command Palette/ });
+    await page.locator(".dock-tab-close:visible").last().focus();
+    const edgeTooltip = page.getByRole("tooltip", { name: /Close Panel/ }).last();
     await expect(edgeTooltip).toBeVisible();
     const edgeBox = await edgeTooltip.boundingBox();
     expect(edgeBox?.x ?? -1).toBeGreaterThanOrEqual(0);
@@ -1187,6 +1246,292 @@ test("packaged RC9 dock workspace, RC8 canvas UX and responsive layouts", async 
     expect((await page.getByTestId("panel-timeline").boundingBox())?.height ?? 0).toBeCloseTo(timelineHeight, 0);
     await expect(page.getByTestId("theme-select")).toHaveValue("dark");
     expect(await page.evaluate(() => window.suwolTest?.getWorkspaceLayout())).toEqual(persistedLayout);
+  } finally {
+    await app.close();
+  }
+});
+
+test("packaged RC10 exact pointer coordinates and asymmetric PNG round-trip", async () => {
+  test.setTimeout(90_000);
+  const executablePath = findExecutable(path.resolve("out"));
+  expect(executablePath, "packaged Electron executable").not.toBeNull();
+  if (executablePath === null) throw new Error("Packaged executable was not found.");
+  const userData = path.resolve("out", "e2e-rc10-user-data");
+  fs.rmSync(userData, { recursive: true, force: true });
+  const app = await electron.launch({
+    executablePath,
+    args: [`--user-data-dir=${userData}`],
+  });
+  try {
+    const page = await waitForWorkspace(app);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.getByLabel(/Language|언어/).selectOption("en");
+    await expect(page.locator(".workspace-actions")).toHaveCount(0);
+    await expect(page.getByTestId("open-command-palette")).toHaveCount(0);
+    await expect(page.getByTestId("toggle-right-dock")).toHaveCount(0);
+    const empty = page.locator(".empty-state");
+    await expect(empty.locator("h1, p, .empty-state-icon")).toHaveCount(0);
+    await expect(empty.getByRole("button")).toHaveCount(2);
+
+    await page.getByTestId("empty-new").click();
+    await page.getByLabel("Width").fill("32");
+    await page.getByLabel("Height").fill("32");
+    await page.getByTestId("create-document").click();
+    await expect(page.getByTestId("pixel-canvas")).toHaveAttribute("data-renderer-mode", "webgl2");
+
+    const zoomCases = [
+      { zoom: 1, color: "#d20f39" },
+      { zoom: 2, color: "#16a34a" },
+      { zoom: 4, color: "#2563eb" },
+      { zoom: 8, color: "#e8790c" },
+    ] as const;
+    const verificationPoints = [[0, 0], [31, 0], [0, 31], [31, 31], [15, 15]] as const;
+    for (const entry of zoomCases) {
+      await page.evaluate(async () => window.suwolTest?.executeCommand("view.zoom100"));
+      while ((await page.evaluate(() => window.suwolTest?.getViewport()?.zoom ?? 0)) < entry.zoom)
+        await page.evaluate(async () => window.suwolTest?.executeCommand("view.zoomIn"));
+      await expect.poll(() => page.evaluate(() => window.suwolTest?.getViewport()?.zoom ?? 0)).toBe(entry.zoom);
+      await setHex(page, entry.color);
+      const rgb = [
+        Number.parseInt(entry.color.slice(1, 3), 16),
+        Number.parseInt(entry.color.slice(3, 5), 16),
+        Number.parseInt(entry.color.slice(5, 7), 16),
+        255,
+      ];
+      for (const [x, y] of verificationPoints) {
+        const target = await pixel(page, x, y);
+        await page.mouse.click(target.x, target.y);
+        await expectActivePixel(page, x, y, rgb);
+      }
+    }
+
+    const host = page.getByTestId("pixel-canvas-host");
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.toggleTimeline"));
+    await expect(page.getByTestId("panel-timeline")).toBeVisible();
+    const timelineSplitter = page.getByRole("separator", { name: "Timeline" });
+    await timelineSplitter.focus();
+    let resizedHostBox = await host.boundingBox();
+    if (resizedHostBox === null) throw new Error("Canvas size is unavailable.");
+    while (resizedHostBox.height > 411.75) {
+      await page.keyboard.press("ArrowUp");
+      resizedHostBox = await host.boundingBox();
+      if (resizedHostBox === null) throw new Error("Resized canvas is unavailable.");
+    }
+    expect(Math.abs(resizedHostBox.height - 407.75)).toBeLessThanOrEqual(4);
+    await expect.poll(() => page.evaluate(() => window.suwolTest?.getViewport()?.viewportHeight ?? 0)).toBeCloseTo(resizedHostBox.height, 0);
+    await page.evaluate(async () => window.suwolTest?.executeCommand("view.zoomFit"));
+    const fitZoom = await page.evaluate(() => window.suwolTest?.getViewport()?.zoom ?? 0);
+    expect(fitZoom).toBeCloseTo(10.7421875, 0);
+    expect(Number.isInteger(fitZoom)).toBe(false);
+    await setHex(page, "#7c3aed");
+    for (const [x, y] of verificationPoints) {
+      const fitTarget = await pixel(page, x, y);
+      await page.mouse.click(fitTarget.x, fitTarget.y);
+      await expectActivePixel(page, x, y, [124, 58, 237, 255]);
+    }
+
+    await page.getByLabel("UI scale").selectOption("2");
+    await page.evaluate(async () => window.suwolTest?.executeCommand("view.zoomFit"));
+    const scaledTarget = await pixel(page, 24, 7);
+    await page.mouse.click(scaledTarget.x, scaledTarget.y);
+    await expectActivePixel(page, 24, 7, [124, 58, 237, 255]);
+    await page.getByLabel("UI scale").selectOption("1");
+
+    const dockSplitter = page.getByRole("separator", { name: "Resize Right Dock" });
+    await dockSplitter.focus();
+    await page.keyboard.press("ArrowLeft");
+    const resizedTarget = await pixel(page, 27, 19);
+    await page.mouse.click(resizedTarget.x, resizedTarget.y);
+    await expectActivePixel(page, 27, 19, [124, 58, 237, 255]);
+    await expect(page.getByTestId("panel-timeline")).toBeVisible();
+    const timelineTarget = await pixel(page, 5, 25);
+    await page.mouse.click(timelineTarget.x, timelineTarget.y);
+    await expectActivePixel(page, 5, 25, [124, 58, 237, 255]);
+
+    const panAndVerify = async (
+      mode: "space" | "middle",
+      deltaX: number,
+      deltaY: number,
+      documentPoint: readonly [number, number],
+    ): Promise<void> => {
+      const beforePan = await page.evaluate(() => window.suwolTest?.getActiveDocumentHash()),
+        centerBox = await page.getByTestId("pixel-canvas").boundingBox();
+      if (centerBox === null) throw new Error("Canvas bounds are unavailable.");
+      const center = {
+        x: centerBox.x + centerBox.width / 2,
+        y: centerBox.y + centerBox.height / 2,
+      };
+      await page.mouse.move(center.x, center.y);
+      if (mode === "space") await page.keyboard.down("Space");
+      await page.mouse.down(mode === "middle" ? { button: "middle" } : undefined);
+      await page.mouse.move(center.x + deltaX, center.y + deltaY, { steps: 4 });
+      await page.mouse.up(mode === "middle" ? { button: "middle" } : undefined);
+      if (mode === "space") await page.keyboard.up("Space");
+      expect(await page.evaluate(() => window.suwolTest?.getActiveDocumentHash())).toBe(beforePan);
+      const target = await pixel(page, documentPoint[0], documentPoint[1]);
+      await page.mouse.click(target.x, target.y);
+      await expectActivePixel(page, documentPoint[0], documentPoint[1], [124, 58, 237, 255]);
+    };
+    await panAndVerify("space", 40, 25, [29, 28]);
+    await panAndVerify("middle", -20, 10, [28, 27]);
+    await panAndVerify("space", -120, -80, [15, 15]);
+    await panAndVerify("middle", 220, 140, [16, 16]);
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.toggleTimeline"));
+    await expect(page.getByTestId("panel-timeline")).toHaveCount(0);
+    await panAndVerify("space", -45, 30, [12, 20]);
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.applyAnimationLayout"));
+    await panAndVerify("middle", 35, -20, [18, 12]);
+
+    const fixture = asymmetricPngFixture();
+    await page.evaluate(async (values) => {
+      const bytes = Uint8Array.from(values);
+      await window.suwolDesktop?.test?.configureDialog({
+        operation: "open",
+        fileName: "rc10-asymmetric.png",
+        data: bytes.buffer,
+      });
+    }, [...fixture.bytes]);
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+O" : "Control+O");
+    await expect.poll(() => page.evaluate(() => window.suwolTest?.getCanvasSize())).toEqual({ width: 16, height: 16 });
+    await expectActivePixel(page, 0, 0, [255, 0, 0, 255]);
+    await expectActivePixel(page, 15, 0, [0, 255, 0, 255]);
+    await expectActivePixel(page, 0, 15, [0, 0, 255, 255]);
+    await expectActivePixel(page, 15, 15, [255, 255, 0, 255]);
+    await expectRenderedPixel(page, 0, 0, [255, 0, 0, 255]);
+    await expectRenderedPixel(page, 0, 15, [0, 0, 255, 255]);
+
+    await setHex(page, "#c026d3");
+    const importedEdit = await pixel(page, 6, 9);
+    await page.mouse.click(importedEdit.x, importedEdit.y);
+    fixture.rgba.set([192, 38, 211, 255], (9 * 16 + 6) * 4);
+    await page.evaluate(async () => window.suwolDesktop?.test?.configureDialog({
+      operation: "save-suwolpixel",
+      fileName: "rc10-roundtrip.suwolpixel",
+    }));
+    await page.evaluate(async () => window.suwolTest?.executeCommand("file.saveAs"));
+    await expect.poll(async () => (await artifactBytes(page, "rc10-roundtrip.suwolpixel"))?.byteLength ?? 0).toBeGreaterThan(100);
+    await page.evaluate(async () => window.suwolTest?.executeCommand("file.close"));
+    await page.evaluate(async () => window.suwolDesktop?.test?.configureDialog({
+      operation: "open",
+      fileName: "rc10-roundtrip.suwolpixel",
+    }));
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+O" : "Control+O");
+    await expectActivePixel(page, 6, 9, [192, 38, 211, 255]);
+    await expectActivePixel(page, 0, 0, [255, 0, 0, 255]);
+    await expectActivePixel(page, 0, 15, [0, 0, 255, 255]);
+    await page.evaluate(async () => window.suwolDesktop?.test?.configureDialog({
+      operation: "save-png",
+      fileName: "rc10-export.png",
+    }));
+    await page.evaluate(async () => window.suwolTest?.executeCommand("file.exportPng"));
+    await expect.poll(async () => await artifactBytes(page, "rc10-export.png")).not.toBeNull();
+    const exportedBytes = await artifactBytes(page, "rc10-export.png");
+    if (exportedBytes === null) throw new Error("PNG export was not written.");
+    const decoded = decode(exportedBytes);
+    expect(decoded).toMatchObject({ width: 16, height: 16, channels: 4 });
+    expect(Uint8Array.from(decoded.data)).toEqual(fixture.rgba);
+  } finally {
+    await app.close();
+  }
+});
+
+test("packaged RC10 Canvas2D keeps top-left PNG orientation", async () => {
+  const executablePath = findExecutable(path.resolve("out"));
+  expect(executablePath, "packaged Electron executable").not.toBeNull();
+  if (executablePath === null) throw new Error("Packaged executable was not found.");
+  const userData = path.resolve("out", "e2e-rc10-canvas2d-user-data");
+  fs.rmSync(userData, { recursive: true, force: true });
+  const app = await electron.launch({
+    executablePath,
+    args: [`--user-data-dir=${userData}`, "--force-canvas2d"],
+  });
+  try {
+    const page = await waitForWorkspace(app),
+      fixture = asymmetricPngFixture();
+    await page.evaluate(async (values) => {
+      const bytes = Uint8Array.from(values);
+      await window.suwolDesktop?.test?.configureDialog({
+        operation: "open",
+        fileName: "rc10-canvas2d.png",
+        data: bytes.buffer,
+      });
+    }, [...fixture.bytes]);
+    await page.getByTestId("empty-open").click();
+    await expect(page.getByTestId("pixel-canvas")).toHaveAttribute("data-renderer-mode", "canvas2d");
+    await expectActivePixel(page, 0, 0, [255, 0, 0, 255]);
+    await expectActivePixel(page, 0, 15, [0, 0, 255, 255]);
+    await expectRenderedPixel(page, 0, 0, [255, 0, 0, 255]);
+    await expectRenderedPixel(page, 0, 15, [0, 0, 255, 255]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("packaged RC10 renderer failure shows recovery actions", async () => {
+  const executablePath = findExecutable(path.resolve("out"));
+  expect(executablePath, "packaged Electron executable").not.toBeNull();
+  if (executablePath === null) throw new Error("Packaged executable was not found.");
+  const userData = path.resolve("out", "e2e-rc10-fatal-user-data");
+  fs.rmSync(userData, { recursive: true, force: true });
+  const app = await electron.launch({
+    executablePath,
+    args: [`--user-data-dir=${userData}`, "--force-renderer-failure"],
+  });
+  try {
+    const page = await app.firstWindow();
+    await expect(page.getByRole("alert")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("alert")).not.toContainText(/Error:| at |stack/i);
+    await expect(page.getByRole("button", { name: /Reset workspace|작업 공간 초기화/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Restart without plugins|플러그인 없이/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Open logs folder|로그 폴더/ })).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});
+
+test("packaged RC10 boots legacy, corrupt, panel-free and plugin-disabled workspaces", async () => {
+  const executablePath = findExecutable(path.resolve("out"));
+  expect(executablePath, "packaged Electron executable").not.toBeNull();
+  if (executablePath === null) throw new Error("Packaged executable was not found.");
+  const userData = path.resolve("out", "e2e-rc10-boot-user-data");
+  fs.rmSync(userData, { recursive: true, force: true });
+  let app = await electron.launch({
+    executablePath,
+    args: [`--user-data-dir=${userData}`],
+  });
+  try {
+    let page = await waitForWorkspace(app);
+    for (const stored of [
+      "{broken",
+      JSON.stringify({ version: 1, theme: "dark" }),
+      JSON.stringify({ version: 2, language: "en" }),
+      JSON.stringify({ version: 3, uiScale: 1.25 }),
+    ]) {
+      await page.evaluate(([key, value]) => localStorage.setItem(key, value), [
+        "suwol.pixel-studio.settings",
+        stored,
+      ] as const);
+      await page.reload();
+      await expect(page.getByTestId("workspace-shell")).toBeVisible();
+    }
+    for (const command of [
+      "window.toggleLayers",
+      "window.togglePalette",
+      "window.toggleProperties",
+      "window.togglePreview",
+    ])
+      await page.evaluate(async (id) => window.suwolTest?.executeCommand(id), command);
+    await expect(page.getByTestId("right-dock")).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByTestId("workspace-shell")).toBeVisible();
+    await expect(page.getByTestId("right-dock")).toHaveCount(0);
+    await app.close();
+    app = await electron.launch({
+      executablePath,
+      args: [`--user-data-dir=${userData}`, "--disable-plugins"],
+    });
+    page = await waitForWorkspace(app);
+    await expect(page.getByTestId("workspace-shell")).toBeVisible();
   } finally {
     await app.close();
   }

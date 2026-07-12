@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PixelRenderer } from "./renderer";
+import {
+  PixelRenderer,
+  WEBGL_VERTEX_SHADER_SOURCE,
+  configureTextureUpload,
+} from "./renderer";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -51,5 +55,34 @@ describe("PixelRenderer resources", () => {
     renderer.dispose();
     expect(deleted).toMatchObject({ texture: 2, program: 2, vao: 2, buffer: 2, shader: 4 });
     expect(listeners.size).toBe(0);
+  });
+});
+
+describe("renderer orientation policy", () => {
+  it("keeps UVs row-major while applying one top-left screen-space flip", () => {
+    expect(WEBGL_VERTEX_SHADER_SOURCE).toContain(
+      "gl_Position=vec4(clip.x,-clip.y,0,1)",
+    );
+    expect(WEBGL_VERTEX_SHADER_SOURCE).toContain("v_uv=a_position");
+    expect(WEBGL_VERTEX_SHADER_SOURCE).not.toContain("1.0-a_position.y");
+  });
+
+  it("resets all global unpack state before full and partial uploads", () => {
+    const pixelStorei = vi.fn();
+    const gl = {
+      pixelStorei,
+      UNPACK_ALIGNMENT: 1,
+      UNPACK_FLIP_Y_WEBGL: 2,
+      UNPACK_PREMULTIPLY_ALPHA_WEBGL: 3,
+      UNPACK_COLORSPACE_CONVERSION_WEBGL: 4,
+      NONE: 0,
+    } as unknown as WebGL2RenderingContext;
+    configureTextureUpload(gl);
+    expect(pixelStorei.mock.calls).toEqual([
+      [1, 1],
+      [2, 0],
+      [3, 0],
+      [4, 0],
+    ]);
   });
 });

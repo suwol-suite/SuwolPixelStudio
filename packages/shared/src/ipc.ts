@@ -27,6 +27,8 @@ export const IPC_CHANNELS = Object.freeze({
   appGetDiagnostics: "suwol:app:get-diagnostics",
   appOpenLogsFolder: "suwol:app:open-logs-folder",
   appCopyDiagnostics: "suwol:app:copy-diagnostics",
+  appRelaunchWithoutPlugins: "suwol:app:relaunch-without-plugins",
+  appReportRendererFailure: "suwol:app:report-renderer-failure",
   shellOpenExternal: "suwol:shell:open-external",
   commandInvoke: "suwol:command:invoke",
   commandSetState: "suwol:command:set-state",
@@ -321,6 +323,8 @@ export interface SuwolDesktopApi {
     getDiagnostics(): Promise<AppDiagnostics>;
     openLogsFolder(): Promise<void>;
     copyDiagnostics(): Promise<void>;
+    relaunchWithoutPlugins(): Promise<void>;
+    reportRendererFailure(): Promise<void>;
   }>;
   readonly shell: Readonly<{
     openExternal(url: string): Promise<void>;

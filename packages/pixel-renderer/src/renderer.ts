@@ -16,6 +16,17 @@ import {
 import type { Viewport } from "./viewport";
 
 export type RendererMode = "webgl2" | "canvas2d";
+export const WEBGL_VERTEX_SHADER_SOURCE = `#version 300 es
+in vec2 a_position; uniform vec2 u_canvas; uniform vec2 u_origin; uniform vec2 u_size; out vec2 v_uv;
+void main(){ vec2 p=u_origin+a_position*u_size; vec2 clip=(p/u_canvas)*2.0-1.0; gl_Position=vec4(clip.x,-clip.y,0,1); v_uv=a_position; }`;
+
+export function configureTextureUpload(gl: WebGL2RenderingContext): void {
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
+  gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+}
+
 export interface PixelRenderOptions {
   readonly activeFrameId: FrameId;
   readonly activeLayerId?: string;
@@ -38,6 +49,7 @@ export class PixelRenderer {
   #viewport: Viewport | null = null;
   #frame: number | null = null;
   #disposed = false;
+  #uploadReported = false;
   readonly #onContextLost = (event: Event): void => {
     event.preventDefault();
     this.onDiagnostic("WebGL2 context lost; rendering is paused.");
@@ -126,6 +138,7 @@ export class PixelRenderer {
     if (this.#canvas.width !== width || this.#canvas.height !== height) {
       this.#canvas.width = width;
       this.#canvas.height = height;
+      this.onDiagnostic("Viewport backing buffer resized.");
     }
     viewport.resize(this.#canvas.clientWidth, this.#canvas.clientHeight);
     this.#viewport = viewport;
@@ -164,9 +177,7 @@ export class PixelRenderer {
     const vertex = compileShader(
       gl,
       gl.VERTEX_SHADER,
-      `#version 300 es
-      in vec2 a_position; uniform vec2 u_canvas; uniform vec2 u_origin; uniform vec2 u_size; out vec2 v_uv;
-      void main(){ vec2 p=u_origin+a_position*u_size; vec2 clip=(p/u_canvas)*2.0-1.0; gl_Position=vec4(clip.x,-clip.y,0,1); v_uv=vec2(a_position.x,1.0-a_position.y); }`,
+      WEBGL_VERTEX_SHADER_SOURCE,
     );
     const fragment = compileShader(
       gl,
@@ -206,6 +217,7 @@ export class PixelRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.onDiagnostic("WebGL2 renderer initialized.");
   }
 
   #releaseGl(): void {
@@ -231,7 +243,7 @@ export class PixelRenderer {
     )
       return;
     gl.bindTexture(gl.TEXTURE_2D, this.#texture);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    configureTextureUpload(gl);
     gl.texImage2D(
       gl.TEXTURE_2D,
       0,
@@ -243,6 +255,10 @@ export class PixelRenderer {
       gl.UNSIGNED_BYTE,
       this.#bytes,
     );
+    if (!this.#uploadReported) {
+      this.#uploadReported = true;
+      this.onDiagnostic("Top-left RGBA texture upload initialized.");
+    }
   }
   #writeCompositedRegion(region: CompositedRegion): void {
     if (this.#bytes === null) return;
@@ -265,7 +281,7 @@ export class PixelRenderer {
     const { rect, pixels } = region;
     if (rect.width === 0 || rect.height === 0) return;
     gl.bindTexture(gl.TEXTURE_2D, this.#texture);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    configureTextureUpload(gl);
     gl.texSubImage2D(
       gl.TEXTURE_2D,
       0,

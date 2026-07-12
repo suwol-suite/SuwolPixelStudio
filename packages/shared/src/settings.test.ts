@@ -51,6 +51,16 @@ describe("settings validation", () => {
     expect(settings.layouts[0]?.schemaVersion).toBe(3);
     expect(settings.workspaceLayout.timelineVisible).toBe(true);
   });
+  it.each([1, 2, 3] as const)("boots schema v%s settings with a valid workspace", (version) => {
+    const settings = normalizeSettings({
+      version,
+      theme: "dark",
+      panels: { layers: false, palette: false, properties: false, preview: false, timeline: false },
+    });
+    expect(settings.theme).toBe("dark");
+    expect(settings.workspaceLayout.schemaVersion).toBe(3);
+    expect(settings.workspaceLayout.timelineVisible).toBe(false);
+  });
 
   it("rejects settings from an unknown schema version", () => {
     expect(normalizeSettings({ version: 99, theme: "dark" })).toEqual(
