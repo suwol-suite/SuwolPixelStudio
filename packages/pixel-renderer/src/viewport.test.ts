@@ -34,6 +34,19 @@ describe("Viewport", () => {
     view.zoomOut();
     expect(view.zoom).toBe(1);
   });
+  it("sets 100% without implicitly centering the canvas", () => {
+    const view = new Viewport(10, 10, 100, 100);
+    view.zoom = 2;
+    view.panX = 13;
+    view.panY = 17;
+    const before = view.screenToDocument({ x: 50, y: 50 });
+    view.zoom100();
+    expect(view.zoom).toBe(1);
+    expect(view.screenToDocument({ x: 50, y: 50 })).toEqual(before);
+    view.center();
+    expect(view.panX).toBe(45);
+    expect(view.panY).toBe(45);
+  });
   it("rejects screen pixels outside the document", () => {
     const view = new Viewport(10, 10);
     expect(view.screenToPixel({ x: -1, y: 0 })).toBeNull();

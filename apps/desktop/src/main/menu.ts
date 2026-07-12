@@ -87,9 +87,21 @@ const labels = {
     light: "Light",
     resetLayout: "Reset Layout",
     tools: "Tools",
+    rightDock: "Right Dock",
     layers: "Layers",
+    palette: "Palette",
+    properties: "Properties",
+    preview: "Preview",
     timeline: "Timeline",
+    pluginManager: "Plugin Manager",
+    layouts: "Layouts",
+    manageLayouts: "Manage Layouts…",
+    staticEditing: "Static Editing",
+    animationWorkspace: "Animation",
+    tilemapWorkspace: "Tilemap",
     about: "About Suwol Pixel Studio",
+    exit: "Exit",
+    centerCanvas: "Center Canvas",
     managePlugins: "Manage Plugins",
     installPlugin: "Install Plugin…",
     disableAllPlugins: "Disable All Plugins",
@@ -169,9 +181,21 @@ const labels = {
     light: "라이트",
     resetLayout: "레이아웃 초기화",
     tools: "도구",
+    rightDock: "오른쪽 Dock",
     layers: "레이어",
+    palette: "팔레트",
+    properties: "속성",
+    preview: "미리보기",
     timeline: "타임라인",
+    pluginManager: "플러그인 관리자",
+    layouts: "레이아웃",
+    manageLayouts: "레이아웃 관리…",
+    staticEditing: "정적 편집",
+    animationWorkspace: "애니메이션",
+    tilemapWorkspace: "타일맵",
     about: "Suwol Pixel Studio 정보",
+    exit: "종료",
+    centerCanvas: "캔버스 가운데 맞춤",
     managePlugins: "플러그인 관리",
     installPlugin: "플러그인 설치…",
     disableAllPlugins: "모든 플러그인 비활성화",
@@ -194,6 +218,7 @@ export function installApplicationMenu(
   window: BrowserWindow,
   locale: string,
   pluginCommands: readonly PluginMenuCommand[] = [],
+  platform: NodeJS.Platform = process.platform,
 ): void {
   const language: MenuLanguage = locale
     .toLocaleLowerCase("en-US")
@@ -202,10 +227,18 @@ export function installApplicationMenu(
     : "en";
   const t = labels[language];
   const template: MenuItemConstructorOptions[] = [];
-  if (process.platform === "darwin")
+  if (platform === "darwin")
     template.push({
       label: "Suwol Pixel Studio",
-      submenu: [{ role: "about" }, { type: "separator" }, { role: "quit" }],
+      submenu: [
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
     });
   template.push(
     {
@@ -266,9 +299,9 @@ export function installApplicationMenu(
           accelerator: DEFAULT_KEYBINDINGS["file.close"],
           click: commandClick(window, "file.close"),
         },
-        ...(process.platform === "darwin"
+        ...(platform === "darwin"
           ? []
-          : [{ type: "separator" as const }, { role: "quit" as const }]),
+          : [{ type: "separator" as const }, { label: t.exit, role: "quit" as const }]),
       ],
     },
     {
@@ -516,6 +549,7 @@ export function installApplicationMenu(
           click: commandClick(window, "view.zoom100"),
         },
         { label: t.zoomFit, click: commandClick(window, "view.zoomFit") },
+        { label: t.centerCanvas, click: commandClick(window, "view.centerCanvas") },
         { type: "separator" },
         {
           label: t.onionSkin,
@@ -569,23 +603,70 @@ export function installApplicationMenu(
       label: t.window,
       submenu: [
         {
+          id: "window.toggleTools",
           label: t.tools,
           type: "checkbox",
           checked: true,
           click: commandClick(window, "window.toggleTools"),
         },
         {
+          id: "window.toggleRightDock",
+          label: t.rightDock,
+          type: "checkbox",
+          checked: true,
+          click: commandClick(window, "window.toggleRightDock"),
+        },
+        { type: "separator" },
+        {
+          id: "window.toggleLayers",
           label: t.layers,
           type: "checkbox",
           checked: true,
           click: commandClick(window, "window.toggleLayers"),
         },
         {
-          label: t.timeline,
+          id: "window.togglePalette",
+          label: t.palette,
           type: "checkbox",
           checked: true,
+          click: commandClick(window, "window.togglePalette"),
+        },
+        {
+          id: "window.toggleProperties",
+          label: t.properties,
+          type: "checkbox",
+          checked: true,
+          click: commandClick(window, "window.toggleProperties"),
+        },
+        {
+          id: "window.togglePreview",
+          label: t.preview,
+          type: "checkbox",
+          checked: true,
+          click: commandClick(window, "window.togglePreview"),
+        },
+        {
+          id: "window.toggleTimeline",
+          label: t.timeline,
+          type: "checkbox",
+          checked: false,
+          accelerator: DEFAULT_KEYBINDINGS["window.toggleTimeline"],
           click: commandClick(window, "window.toggleTimeline"),
         },
+        { type: "separator" },
+        { label: t.pluginManager, click: commandClick(window, "plugin.manage") },
+        {
+          label: t.layouts,
+          submenu: [
+            { id: "window.applyStaticLayout", label: t.staticEditing, type: "radio", checked: true, click: commandClick(window, "window.applyStaticLayout") },
+            { id: "window.applyAnimationLayout", label: t.animationWorkspace, type: "radio", click: commandClick(window, "window.applyAnimationLayout") },
+            { id: "window.applyTilemapLayout", label: t.tilemapWorkspace, type: "radio", click: commandClick(window, "window.applyTilemapLayout") },
+            { type: "separator" },
+            { id: "window.manageLayouts", label: t.manageLayouts, click: commandClick(window, "window.manageLayouts") },
+            { label: t.resetLayout, click: commandClick(window, "view.resetLayout") },
+          ],
+        },
+        { label: t.commandPalette, accelerator: DEFAULT_KEYBINDINGS["view.commandPalette"], click: commandClick(window, "view.commandPalette") },
         { type: "separator" },
         { role: "minimize" },
         { role: "zoom" },

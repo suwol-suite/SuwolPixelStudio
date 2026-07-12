@@ -1,5 +1,5 @@
 # Layout system
 
-Layouts are versioned recursive split/tab trees. Parsing treats imported JSON as unknown, validates ratios, panel IDs, duplicate placement, depth, and node count, and preserves unknown plugin panel IDs as unavailable placeholders. Missing core panels are recoverable through Reset Layout.
+Layout schema v3 stores the fixed tool rail, right Dock, optional bottom Timeline, and two right-side tab groups explicitly. Each group persists ordered panel IDs and one active panel; only that panel is mounted. Parsing treats imported JSON as unknown, validates panel IDs, duplicate placement, Dock width, group ratio, and Timeline height, and preserves unknown plugin panel IDs as unavailable placeholders. Empty groups collapse, an empty right Dock hides, and missing core panels are recoverable through Window commands or Reset Layout.
 
-Named layouts are stored in Preferences and can be exported/imported without document data. Panel visibility, sizes, and tab selection are workspace UI state.
+Schema v1/v2 recursive trees migrate to v3 without changing `.suwolpixel` documents. Named layouts are stored in Preferences and can be exported/imported without document data. Static Editing, Animation, and Tilemap are built-in named layouts. Before switching presets, the current workspace state is retained under its layout ID. Panel visibility, Dock width, group ratio, Timeline height, tab order, and active tabs are workspace UI state and never enter document undo history.

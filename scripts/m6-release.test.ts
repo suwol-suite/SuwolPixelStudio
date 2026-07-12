@@ -10,7 +10,7 @@ const root = JSON.parse(readFileSync("package.json", "utf8")) as Readonly<{
 
 describe("M6 release metadata", () => {
   it("keeps version, license and release scripts consistent", () => {
-    expect(root.version).toBe("0.6.0-rc.7");
+    expect(root.version).toBe("1.0.1-rc.1");
     expect(root.license).toBe("Apache-2.0");
     expect(typeof root.scripts["package:smoke"]).toBe("string");
     expect(typeof root.scripts["release:prepare"]).toBe("string");
@@ -18,12 +18,12 @@ describe("M6 release metadata", () => {
     expect(typeof root.scripts["release:verify-tag"]).toBe("string");
     expect(typeof root.scripts["workflow:check"]).toBe("string");
     expect(typeof root.scripts["license:check"]).toBe("string");
-    expect(readFileSync("README.md", "utf8")).toContain("v0.6.0-rc.7 / M6");
+    expect(readFileSync("README.md", "utf8")).toContain("v1.0.1-rc.1 / RC9");
   });
   it("validates privacy-safe diagnostic metadata", () => {
     const info = appDiagnosticsSchema.parse({
       productName: "Suwol Pixel Studio",
-      version: "0.6.0-rc.7",
+      version: "1.0.1-rc.1",
       electron: "43.1.0",
       chromium: "142.0.0.0",
       node: "22.12.0",
@@ -51,7 +51,13 @@ describe("M6 release metadata", () => {
       icns = readFileSync("apps/desktop/assets/icon.icns"),
       ico = readFileSync("apps/desktop/assets/icon.ico"),
       linuxPng = readFileSync("apps/desktop/assets/linux/studio.suwol.pixel.png");
-    expect(forge).toContain('icon: "apps/desktop/assets/icon"');
+    expect(forge).toContain('platform === "darwin"');
+    expect(forge).toContain('? "apps/desktop/assets/icon.icns"');
+    expect(forge).toContain('? "apps/desktop/assets/icon.ico"');
+    expect(forge).toContain(': "apps/desktop/assets/linux/studio.suwol.pixel.png"');
+    expect(forge).toContain('CFBundleIconFile: "icon.icns"');
+    expect(forge).toContain('CFBundleTypeIconFile: "icon.icns"');
+    expect(forge).toContain('icon: iconPathForPlatform(process.platform)');
     expect(icns.subarray(0, 4).toString("ascii")).toBe("icns");
     expect(ico.readUInt16LE(2)).toBe(1);
     expect(ico.readUInt16LE(4)).toBe(7);
@@ -63,6 +69,14 @@ describe("M6 release metadata", () => {
     expect(forge).toContain('name: "@reforged/maker-appimage"');
     expect(forge).toContain('compressor: "zstd"');
     expect(readFileSync("apps/desktop/src/renderer/components/AboutDialog.tsx", "utf8")).toContain("studio.suwol.pixel.png");
+    const main = readFileSync("apps/desktop/src/main/index.ts", "utf8"),
+      desktop = readFileSync("apps/desktop/assets/linux/suwol-pixel-studio.desktop", "utf8"),
+      packageSmoke = readFileSync("scripts/package-smoke.ts", "utf8");
+    expect(main).toContain('process.platform === "win32" ? "icon.ico" : "studio.suwol.pixel.png"');
+    expect(main).toContain('process.platform !== "darwin"');
+    expect(desktop).toContain("Icon=studio.suwol.pixel");
+    expect(packageSmoke).toContain('reference !== "icon.icns"');
+    expect(packageSmoke).toContain("Electron default icon remains");
   });
   it("separates core publication from the macOS follow-up", () => {
     const core = readFileSync(".github/workflows/release-core.yml", "utf8"),

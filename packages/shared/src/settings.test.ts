@@ -37,16 +37,44 @@ describe("settings validation", () => {
     expect(settings.theme).toBe("dark");
     expect(settings.panels.tools).toBe(false);
     expect(settings.panels.layers).toBe(DEFAULT_SETTINGS.panels.layers);
-    expect(settings.leftPanelWidth).toBe(52);
-    expect(settings.rightPanelWidth).toBe(520);
+    expect(settings.leftPanelWidth).toBe(48);
+    expect(settings.rightPanelWidth).toBe(720);
     expect(settings.timelineHeight).toBe(112);
     expect(settings).not.toHaveProperty("unknown");
+  });
+  it("migrates old layouts, ignores the resizable tool width and defaults Timeline off for new users", () => {
+    expect(DEFAULT_SETTINGS.panels.timeline).toBe(false);
+    expect(DEFAULT_SETTINGS.panels.brushes).toBe(false);
+    const settings = normalizeSettings({ version: 2, panels: { timeline: true }, leftPanelWidth: 260 });
+    expect(settings.panels.timeline).toBe(true);
+    expect(settings.leftPanelWidth).toBe(48);
+    expect(settings.layouts[0]?.schemaVersion).toBe(3);
+    expect(settings.workspaceLayout.timelineVisible).toBe(true);
   });
 
   it("rejects settings from an unknown schema version", () => {
     expect(normalizeSettings({ version: 99, theme: "dark" })).toEqual(
       DEFAULT_SETTINGS,
     );
+  });
+  it("persists a customized built-in workspace before switching presets", () => {
+    const customized = {
+      ...structuredClone(DEFAULT_SETTINGS.workspaceLayout),
+      rightDockWidth: 368,
+      rightSplitRatio: 0.6,
+      upperGroup: { panelIds: ["layers"], activePanelId: "layers" },
+      lowerGroup: { panelIds: ["properties", "palette", "preview"], activePanelId: "palette" },
+    };
+    const settings = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      workspaceLayout: customized,
+      layouts: [customized, ...DEFAULT_SETTINGS.layouts.filter((layout) => layout.id !== customized.id)],
+    });
+    expect(settings.layouts.find((layout) => layout.id === "static-editing")).toMatchObject({
+      rightDockWidth: 368,
+      rightSplitRatio: 0.6,
+      lowerGroup: { activePanelId: "palette" },
+    });
   });
   it("validates, deduplicates and caps persisted recent colors", () => {
     const colors = Array.from({ length: 15 }, (_, index) => [
@@ -78,7 +106,12 @@ describe("settings validation", () => {
       brushPresets: [{ id: "broken" }],
     });
     expect(settings).toMatchObject({ theme: "light", language: "ko", uiScale: 2 });
-    expect(settings.layouts).toHaveLength(1);
+    expect(settings.layouts).toHaveLength(3);
+    expect(settings.layouts.map((layout) => layout.id)).toEqual([
+      "static-editing",
+      "animation",
+      "tilemap",
+    ]);
     expect(settings.keybindings).toEqual(DEFAULT_SETTINGS.keybindings);
     expect(settings.recentColors).toEqual([]);
     expect(settings.brushPresets).toEqual([]);

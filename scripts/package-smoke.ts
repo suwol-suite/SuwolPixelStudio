@@ -1,5 +1,6 @@
 import { access, readdir, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 
 async function files(root: string): Promise<string[]> {
@@ -29,8 +30,19 @@ for (const name of ["LICENSE", "THIRD_PARTY_NOTICES.md", "app.asar"])
   await access(path.join(resources, name));
 const digest = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 if (process.platform === "darwin") {
-  const expected = await readFile("apps/desktop/assets/icon.icns"), packaged = await readFile(path.join(resources, "electron.icns"));
+  const expected = await readFile("apps/desktop/assets/icon.icns"), packaged = await readFile(path.join(resources, "icon.icns"));
   if (digest(expected) !== digest(packaged)) throw new Error("Packaged macOS icon does not match icon.icns.");
+  const legacyPackagerIcon = path.join(resources, "electron.icns");
+  try {
+    const legacy = await readFile(legacyPackagerIcon);
+    if (digest(expected) !== digest(legacy)) throw new Error("A user-visible Electron default icon remains in the macOS bundle.");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const appBundle = path.resolve(executable, "..", "..", ".."),
+    plist = path.join(appBundle, "Contents", "Info.plist"),
+    reference = execFileSync("plutil", ["-extract", "CFBundleIconFile", "raw", plist], { encoding: "utf8" }).trim();
+  if (reference !== "icon.icns") throw new Error(`macOS Info.plist references an unexpected icon: ${reference}`);
 }
 if (process.platform === "linux") {
   const expected = await readFile("apps/desktop/assets/linux/studio.suwol.pixel.png"),

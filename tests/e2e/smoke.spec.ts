@@ -53,6 +53,7 @@ async function dragPixels(
   await page.mouse.up();
 }
 async function setHex(page: Page, value: string): Promise<void> {
+  await page.locator('[data-dock-tab="palette"]').click();
   await page.getByLabel("A", { exact: true }).fill("255");
   const input = page.getByLabel("HEX");
   await input.fill(value);
@@ -291,6 +292,7 @@ test("packaged M2 editor tools, transforms, palette, round-trip and recovery", a
 
     await page.getByTestId("tool-selectionRect").click();
     await dragPixels(page, { x: 1, y: 1 }, { x: 16, y: 16 });
+    await page.locator(".advanced-properties > summary").click();
     await page.getByTestId("crop-selection").click();
     expect(
       await page.evaluate(() => window.suwolTest?.getCanvasSize() ?? null),
@@ -431,6 +433,7 @@ test("packaged M3 frame/cel animation, exports, v3 round-trip and recovery", asy
     await page.getByLabel(/Language|언어/).selectOption("en");
     await page.getByTestId("empty-new").click();
     await page.getByTestId("create-document").click();
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.toggleTimeline"));
     await expect(page.getByTestId("animation-timeline")).toBeVisible();
     expect(await page.evaluate(() => window.suwolTest?.getCanvasSize())).toEqual({ width: 64, height: 64 });
 
@@ -448,7 +451,7 @@ test("packaged M3 frame/cel animation, exports, v3 round-trip and recovery", asy
     expect(await page.evaluate(() => window.suwolTest?.getAnimationState()?.durations)).toEqual([80, 120, 160, 200]);
 
     await page.getByTestId("frame-1").dragTo(page.getByTestId("frame-4"));
-    expect(await page.evaluate(() => window.suwolTest?.getAnimationState()?.durations)).toEqual([120, 160, 200, 80]);
+    await expect.poll(async () => await page.evaluate(() => window.suwolTest?.getAnimationState()?.durations)).toEqual([120, 160, 200, 80]);
     await page.getByTestId("frame-2").click();
     await page.getByTestId("frame-duplicate").click();
     expect(await page.evaluate(() => window.suwolTest?.getAnimationState()?.frameCount)).toBe(5);
@@ -600,6 +603,7 @@ test("packaged M3 export and resize workers cancel without document mutation", a
     await page.getByLabel("Width").fill("256");
     await page.getByLabel("Height").fill("256");
     await page.getByTestId("create-document").click();
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.toggleTimeline"));
     for (let index = 0; index < 120; index += 1)
       await page.getByTestId("frame-linked").click();
     expect(await page.evaluate(() => window.suwolTest?.getAnimationState()?.frameCount)).toBe(121);
@@ -619,6 +623,7 @@ test("packaged M3 export and resize workers cancel without document mutation", a
     expect(await artifactBytes(page, canceledName)).toBeNull();
     expect(await page.evaluate(() => window.suwolTest?.getActiveDocumentHash())).toBe(before);
 
+    await page.locator(".advanced-properties > summary").click();
     await page.getByTestId("sprite-resize").click();
     await page.getByRole("checkbox", { name: "Maintain aspect ratio" }).uncheck();
     await page.getByTestId("resize-width").fill("4096");
@@ -812,6 +817,7 @@ test("packaged M5 indexed document, Group tree, v4 archive and Plugin API 1.1 sa
     await page.evaluate(() => window.suwolTest?.openPluginManager());
     await installConfiguredPlugin(page, professionalPackage);
     await expect.poll(async () => (await page.evaluate(() => window.suwolTest?.getPluginState().installed.some((plugin) => plugin.id === "studio.suwol.example-professional")))).toBe(true);
+    await expect.poll(async () => await page.evaluate(() => window.suwolTest?.getPluginState().installed.find((plugin) => plugin.id === "studio.suwol.example-professional")?.runtimeStatus)).toBe("running");
     const runButtons = page.locator(".plugin-contributions").getByRole("button", { name: "Run" });
     await expect(runButtons).toHaveCount(3);
     await page.evaluate(async () => {
@@ -859,7 +865,7 @@ test("packaged M6 Canvas2D, diagnostics, localization and keyboard accessibility
     await expect(page.getByTestId("pixel-canvas")).toHaveAttribute("data-renderer-mode", "canvas2d");
     await page.evaluate(async () => window.suwolTest?.executeCommand("help.about"));
     const about = page.getByRole("dialog", { name: "About Suwol Pixel Studio" });
-    await expect(about).toContainText("0.6.0-rc.7");
+    await expect(about).toContainText("1.0.1-rc.1");
     await expect(about).toContainText("Plugin API 1.1.0");
     await expect(about).toContainText("Apache-2.0");
     const aboutIcon = about.locator(".about-mark img");
@@ -886,6 +892,301 @@ test("packaged M6 Canvas2D, diagnostics, localization and keyboard accessibility
     }, [...aseprite]);
     await expect(page.getByRole("dialog", { name: /Aseprite/ })).toBeVisible();
     await expect.poll(async () => page.evaluate(() => window.suwolTest?.getCanvasSize())).toEqual({ width: 1, height: 1 });
+  } finally {
+    await app.close();
+  }
+});
+
+test("packaged RC9 dock workspace, RC8 canvas UX and responsive layouts", async () => {
+  test.setTimeout(90_000);
+  const executablePath = findExecutable(path.resolve("out"));
+  expect(executablePath, "packaged Electron executable").not.toBeNull();
+  if (executablePath === null) throw new Error("Packaged executable was not found.");
+  const userData = path.resolve("out", "e2e-rc9-user-data"),
+    screenshotDirectory = path.resolve("test-results", "rc9-visual");
+  fs.rmSync(userData, { recursive: true, force: true });
+  fs.rmSync(screenshotDirectory, { recursive: true, force: true });
+  fs.mkdirSync(screenshotDirectory, { recursive: true });
+  let app = await electron.launch({
+    executablePath,
+    args: [`--user-data-dir=${userData}`],
+  });
+  try {
+    let page = await waitForWorkspace(app);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.getByLabel(/Language|언어/).selectOption("en");
+
+    const tabs = page.getByRole("tablist", { name: "Open documents" });
+    await expect(tabs.getByRole("tab")).toHaveCount(0);
+    await expect(page.locator(".app-brand")).toHaveCount(0);
+    await expect(page.getByTestId("panel-timeline")).toHaveCount(0);
+    await page.getByTestId("empty-new").click();
+    await page.getByTestId("create-document").click();
+    await expect(page.getByTestId("pixel-canvas")).toBeVisible();
+    await expect(tabs.getByRole("tab")).toHaveCount(1);
+    await expect(tabs.getByRole("tab")).toContainText("Untitled");
+
+    const upperGroup = page.getByTestId("right-upper-group"),
+      lowerGroup = page.getByTestId("right-lower-group"),
+      rightDock = page.getByTestId("right-dock");
+    await expect(upperGroup.getByRole("tab")).toHaveCount(2);
+    await expect(lowerGroup.getByRole("tab")).toHaveCount(2);
+    await expect(upperGroup.getByRole("tab", { name: /Layers/ })).toHaveAttribute("aria-selected", "true");
+    await expect(lowerGroup.getByRole("tab", { name: /Properties/ })).toHaveAttribute("aria-selected", "true");
+    await page.locator('[data-dock-tab="palette"]').click();
+    await expect(page.getByTestId("panel-palette")).toBeVisible();
+    await expect(page.getByTestId("panel-layers")).toHaveCount(0);
+    await page.locator('[data-dock-tab="layers"]').click();
+    await page.locator('[data-dock-tab="preview"]').click();
+    await expect(page.getByTestId("panel-preview")).toBeVisible();
+    await expect(page.getByTestId("panel-properties")).toHaveCount(0);
+    await page.locator('[data-dock-tab="properties"]').click();
+
+    const initialDockWidth = (await rightDock.boundingBox())?.width ?? 0,
+      dockSplitter = page.getByRole("separator", { name: "Resize Right Dock" }),
+      groupSplitter = page.getByRole("separator", { name: "Resize panel groups" });
+    await dockSplitter.focus();
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("ArrowLeft");
+    expect((await rightDock.boundingBox())?.width ?? 0).toBeGreaterThan(initialDockWidth);
+    const resizedDockWidth = (await rightDock.boundingBox())?.width ?? 0,
+      initialSplit = Number(await groupSplitter.getAttribute("aria-valuenow"));
+    await groupSplitter.focus();
+    await page.keyboard.press("ArrowDown");
+    expect(Number(await groupSplitter.getAttribute("aria-valuenow"))).toBeGreaterThan(initialSplit);
+
+    await page.locator('[data-dock-tab="palette"]').dragTo(page.locator('[data-dock-tab="preview"]'));
+    await expect(lowerGroup.locator('[data-dock-tab="palette"]')).toHaveCount(1);
+    await page.locator('[data-dock-tab="preview"]').click();
+    await page.locator('[data-dock-tab="preview"] .dock-tab-close').click();
+    await expect(page.locator('[data-dock-tab="preview"]')).toHaveCount(0);
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.togglePreview"));
+    await expect(lowerGroup.locator('[data-dock-tab="preview"]')).toHaveCount(1);
+
+    const expandedBefore = (await page.getByTestId("pixel-canvas-host").boundingBox())?.width ?? 0;
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.toggleRightDock"));
+    await expect(rightDock).toHaveCount(0);
+    expect((await page.getByTestId("pixel-canvas-host").boundingBox())?.width ?? 0).toBeGreaterThan(expandedBefore + 200);
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.toggleRightDock"));
+    await expect(rightDock).toBeVisible();
+    expect((await rightDock.boundingBox())?.width ?? 0).toBeCloseTo(resizedDockWidth, 0);
+    await page.locator('[data-dock-tab="layers"]').click();
+    await page.locator('[data-dock-tab="properties"]').click();
+
+    const toolRail = page.getByTestId("panel-tools"),
+      railWidth = (await toolRail.boundingBox())?.width ?? 0;
+    expect(railWidth).toBeGreaterThanOrEqual(40);
+    expect(railWidth).toBeLessThanOrEqual(55);
+    await expect(page.locator('[data-testid="panel-tools"] + [role="separator"]')).toHaveCount(0);
+
+    const overlay = page.getByTestId("pixel-canvas"),
+      host = page.getByTestId("pixel-canvas-host"),
+      canvasBox = await overlay.boundingBox();
+    if (canvasBox === null) throw new Error("Canvas bounds are unavailable.");
+    const center = { x: canvasBox.x + canvasBox.width / 2, y: canvasBox.y + canvasBox.height / 2 },
+      originalHash = await page.evaluate(() => window.suwolTest?.getActiveDocumentHash()),
+      originalViewport = await page.evaluate(() => window.suwolTest?.getViewport());
+    await page.mouse.move(center.x, center.y);
+    await page.keyboard.down("Space");
+    await expect(host).toHaveAttribute("data-pan-state", "grab");
+    await expect(overlay).toHaveCSS("cursor", "grab");
+    await page.mouse.down();
+    await page.mouse.move(center.x + 90, center.y + 55, { steps: 5 });
+    await expect(host).toHaveAttribute("data-pan-state", "grabbing");
+    await expect(overlay).toHaveCSS("cursor", "grabbing");
+    await page.mouse.up();
+    await page.keyboard.up("Space");
+    const spaceViewport = await page.evaluate(() => window.suwolTest?.getViewport());
+    expect((spaceViewport?.panX ?? 0) - (originalViewport?.panX ?? 0)).toBeCloseTo(90, 0);
+    expect((spaceViewport?.panY ?? 0) - (originalViewport?.panY ?? 0)).toBeCloseTo(55, 0);
+    expect(await page.evaluate(() => window.suwolTest?.getActiveDocumentHash())).toBe(originalHash);
+
+    await page.mouse.move(center.x, center.y);
+    await page.mouse.down({ button: "middle" });
+    await page.mouse.move(center.x - 45, center.y + 30, { steps: 4 });
+    await page.mouse.up({ button: "middle" });
+    const middleViewport = await page.evaluate(() => window.suwolTest?.getViewport());
+    expect((middleViewport?.panX ?? 0) - (spaceViewport?.panX ?? 0)).toBeCloseTo(-45, 0);
+    expect((middleViewport?.panY ?? 0) - (spaceViewport?.panY ?? 0)).toBeCloseTo(30, 0);
+    expect(await page.evaluate(() => window.suwolTest?.getActiveDocumentHash())).toBe(originalHash);
+
+    await page.getByTestId("tool-pencil").click();
+    const editPoint = await pixel(page, 32, 32);
+    await page.mouse.click(editPoint.x, editPoint.y);
+    const editedHash = await page.evaluate(() => window.suwolTest?.getActiveDocumentHash());
+    expect(editedHash).not.toBe(originalHash);
+
+    const anchor = { x: canvasBox.x + canvasBox.width * 0.42, y: canvasBox.y + canvasBox.height * 0.37 },
+      beforeWheel = await page.evaluate(() => window.suwolTest?.getViewport());
+    if (beforeWheel === null || beforeWheel === undefined) throw new Error("Viewport is unavailable.");
+    const documentAnchor = {
+      x: (anchor.x - canvasBox.x - beforeWheel.panX) / beforeWheel.zoom,
+      y: (anchor.y - canvasBox.y - beforeWheel.panY) / beforeWheel.zoom,
+    };
+    await page.mouse.move(anchor.x, anchor.y);
+    await page.mouse.wheel(0, -120);
+    await expect.poll(async () => (await page.evaluate(() => window.suwolTest?.getViewport()?.zoom)) ?? 0).toBeGreaterThan(beforeWheel.zoom);
+    const afterWheel = await page.evaluate(() => window.suwolTest?.getViewport());
+    if (afterWheel === null || afterWheel === undefined) throw new Error("Zoomed viewport is unavailable.");
+    expect((anchor.x - canvasBox.x - afterWheel.panX) / afterWheel.zoom).toBeCloseTo(documentAnchor.x, 1);
+    expect((anchor.y - canvasBox.y - afterWheel.panY) / afterWheel.zoom).toBeCloseTo(documentAnchor.y, 1);
+
+    await page.evaluate(async () => window.suwolTest?.executeCommand("view.zoomIn"));
+    await page.evaluate(async () => window.suwolTest?.executeCommand("view.zoomFit"));
+    const fitViewport = await page.evaluate(() => window.suwolTest?.getViewport());
+    expect(fitViewport?.zoom).toBeGreaterThan(1);
+    await page.evaluate(async () => window.suwolTest?.executeCommand("view.centerCanvas"));
+    const centered = await page.evaluate(() => window.suwolTest?.getViewport());
+    expect(centered).not.toBeNull();
+    await page.evaluate(async () => window.suwolTest?.executeCommand("view.zoom100"));
+    await expect.poll(async () => await page.evaluate(() => window.suwolTest?.getViewport()?.zoom)).toBe(1);
+
+    const hiddenCanvasHeight = (await host.boundingBox())?.height ?? 0;
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.toggleTimeline"));
+    const timelinePanel = page.getByTestId("panel-timeline");
+    await expect(timelinePanel).toBeVisible();
+    const timelineHeight = (await timelinePanel.boundingBox())?.height ?? 0,
+      visibleCanvasHeight = (await host.boundingBox())?.height ?? 0;
+    expect(timelineHeight).toBeGreaterThan(100);
+    expect(visibleCanvasHeight).toBeLessThan(hiddenCanvasHeight - 80);
+    await page.getByTestId("timeline-close").click();
+    await expect(timelinePanel).toHaveCount(0);
+    expect((await host.boundingBox())?.height ?? 0).toBeGreaterThan(visibleCanvasHeight + 80);
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.toggleTimeline"));
+    await expect(timelinePanel).toBeVisible();
+    expect((await timelinePanel.boundingBox())?.height ?? 0).toBeCloseTo(timelineHeight, 0);
+
+    const layerRow = page.getByTestId("layer-row").first();
+    await expect(layerRow).toHaveAttribute("role", "treeitem");
+    await expect(layerRow).toHaveAttribute("aria-level", "1");
+    await expect(layerRow.locator('input[type="range"], select')).toHaveCount(0);
+    const properties = page.getByTestId("layer-properties");
+    await expect(properties.getByLabel("Layer opacity")).toBeVisible();
+    await expect(properties.getByLabel("Blend Mode")).toBeVisible();
+    expect(await layerRow.evaluate((element) => getComputedStyle(element).whiteSpace)).toBe("nowrap");
+
+    await page.mouse.move(center.x, center.y);
+    await page.getByTestId("tool-pencil").focus();
+    const tooltip = page.getByRole("tooltip", { name: /Pencil/ });
+    await expect(tooltip).toContainText("Pencil");
+    await expect(tooltip).toContainText("Draw the current color");
+    await page.keyboard.press("Escape");
+    await expect(tooltip).toHaveCount(0);
+    await page.getByTestId("toggle-onion").hover();
+    const onionTooltip = page.getByRole("tooltip", { name: /Onion Skin/ });
+    await expect(onionTooltip).toContainText("Onion Skin", { timeout: 2_000 });
+    await expect(onionTooltip).toContainText("at least two frames");
+    const iconMetadata = await page.locator("button.icon-button:visible").evaluateAll((buttons) =>
+      buttons.map((button) => ({
+        label: button.getAttribute("aria-label"),
+        description: button.getAttribute("aria-describedby"),
+      })),
+    );
+    expect(iconMetadata.length).toBeGreaterThan(10);
+    expect(iconMetadata.every(({ label, description }) => Boolean(label && description))).toBe(true);
+    await page.keyboard.press("Escape");
+    await page.getByTestId("open-command-palette").focus();
+    const edgeTooltip = page.getByRole("tooltip", { name: /Command Palette/ });
+    await expect(edgeTooltip).toBeVisible();
+    const edgeBox = await edgeTooltip.boundingBox();
+    expect(edgeBox?.x ?? -1).toBeGreaterThanOrEqual(0);
+    expect((edgeBox?.x ?? 0) + (edgeBox?.width ?? 0)).toBeLessThanOrEqual(1280);
+    await page.keyboard.press("Escape");
+
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.applyAnimationLayout"));
+    await expect(page.getByTestId("panel-timeline")).toBeVisible();
+    await expect(page.getByTestId("panel-preview")).toBeVisible();
+    expect((await page.evaluate(() => window.suwolTest?.getWorkspaceLayout()))?.id).toBe("animation");
+    await page.screenshot({ path: path.join(screenshotDirectory, "preset-animation.png") });
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.applyTilemapLayout"));
+    await expect(page.locator('[data-dock-tab="tilesets"]')).toBeVisible();
+    await expect(page.getByTestId("panel-timeline")).toHaveCount(0);
+    expect((await page.evaluate(() => window.suwolTest?.getWorkspaceLayout()))?.id).toBe("tilemap");
+    await page.screenshot({ path: path.join(screenshotDirectory, "preset-tilemap.png") });
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.applyStaticLayout"));
+    const restoredStatic = await page.evaluate(() => window.suwolTest?.getWorkspaceLayout());
+    expect(restoredStatic?.lowerGroup?.panelIds).toContain("palette");
+    expect(restoredStatic?.rightDockWidth).toBeCloseTo(resizedDockWidth, 0);
+    expect(restoredStatic?.timelineVisible).toBe(true);
+    await page.locator('[data-dock-tab="layers"]').click();
+    await page.locator('[data-dock-tab="properties"]').click();
+    await page.screenshot({ path: path.join(screenshotDirectory, "preset-static-restored.png") });
+
+    await page.evaluate(async () => window.suwolTest?.executeCommand("help.about"));
+    const aboutIcon = page.locator(".about-mark img");
+    await expect(aboutIcon).toBeVisible();
+    expect(await aboutIcon.evaluate((image: HTMLImageElement) => ({ width: image.naturalWidth, height: image.naturalHeight, source: image.currentSrc }))).toMatchObject({ width: 512, height: 512 });
+    expect(await aboutIcon.getAttribute("src")).not.toMatch(/electron/i);
+    await page.screenshot({ path: path.join(screenshotDirectory, "about-icon.png") });
+    await page.getByRole("dialog").getByRole("button", { name: "Close" }).last().click();
+
+    const visualCases = [
+      { width: 1280, height: 720, scale: "1", theme: "dark" },
+      { width: 1280, height: 720, scale: "1.25", theme: "light" },
+      { width: 1280, height: 720, scale: "2", theme: "dark" },
+      { width: 1920, height: 1080, scale: "1", theme: "light" },
+      { width: 1920, height: 1080, scale: "1.25", theme: "dark" },
+      { width: 1920, height: 1080, scale: "2", theme: "light" },
+    ] as const;
+    for (const visual of visualCases) {
+      await page.setViewportSize({ width: visual.width, height: visual.height });
+      await page.getByTestId("ui-scale-select").selectOption(visual.scale);
+      await page.getByTestId("theme-select").selectOption(visual.theme);
+      await page.evaluate(async () => window.suwolTest?.executeCommand("view.zoomFit"));
+      await page.screenshot({
+        path: path.join(screenshotDirectory, `${visual.width}x${visual.height}-${Number(visual.scale) * 100}-${visual.theme}.png`),
+      });
+      const rowMetrics = await layerRow.evaluate((element) => ({
+        height: element.getBoundingClientRect().height,
+        scrollHeight: element.scrollHeight,
+      }));
+      expect(rowMetrics.scrollHeight).toBeLessThanOrEqual(rowMetrics.height + 1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(visual.width + 4);
+      const timelineControls = await page.locator(".playback-toolbar > *").evaluateAll((elements) => elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right };
+      }));
+      for (let index = 1; index < timelineControls.length; index += 1)
+        expect(timelineControls[index - 1]?.right ?? 0).toBeLessThanOrEqual((timelineControls[index]?.left ?? 0) + 1);
+      for (const [name, control] of [["layer-delete", page.getByTestId("layer-delete")], ["ui-scale-select", page.getByTestId("ui-scale-select")]] as const) {
+        const bounds = await control.boundingBox();
+        expect(bounds?.x ?? -1, `${name} left edge at ${visual.width}×${visual.height}/${visual.scale}`).toBeGreaterThanOrEqual(0);
+        expect((bounds?.x ?? 0) + (bounds?.width ?? 0), `${name} right edge at ${visual.width}×${visual.height}/${visual.scale}`).toBeLessThanOrEqual(visual.width);
+      }
+    }
+
+    for (const command of ["window.toggleProperties", "window.togglePalette", "window.togglePreview"])
+      await page.evaluate(async (id) => window.suwolTest?.executeCommand(id), command);
+    await expect(page.getByTestId("right-lower-group")).toHaveCount(0);
+    await expect(page.getByTestId("right-upper-group")).toBeVisible();
+    await page.screenshot({ path: path.join(screenshotDirectory, "upper-group-only.png") });
+    for (const command of ["window.toggleProperties", "window.togglePalette", "window.togglePreview"])
+      await page.evaluate(async (id) => window.suwolTest?.executeCommand(id), command);
+    await page.locator('[data-dock-tab="layers"]').focus();
+    await page.keyboard.press("Delete");
+    await page.locator('[data-dock-tab="palette"]').focus();
+    await page.keyboard.press("Delete");
+    await expect(page.getByTestId("right-upper-group")).toHaveCount(0);
+    await expect(page.getByTestId("right-lower-group")).toBeVisible();
+    await page.screenshot({ path: path.join(screenshotDirectory, "lower-group-only.png") });
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.toggleLayers"));
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.togglePalette"));
+    await page.locator('[data-dock-tab="palette"]').focus();
+    await page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+ArrowDown`);
+    await expect(page.getByTestId("right-upper-group")).toBeVisible();
+    await expect(page.getByTestId("right-lower-group")).toBeVisible();
+
+    await page.getByTestId("ui-scale-select").selectOption("1");
+    await page.getByTestId("theme-select").selectOption("dark");
+    await page.waitForTimeout(300);
+    const persistedLayout = await page.evaluate(() => window.suwolTest?.getWorkspaceLayout());
+    await app.close();
+    app = await electron.launch({ executablePath, args: [`--user-data-dir=${userData}`] });
+    page = await waitForWorkspace(app);
+    await expect(page.getByTestId("panel-timeline")).toBeVisible();
+    expect((await page.getByTestId("panel-timeline").boundingBox())?.height ?? 0).toBeCloseTo(timelineHeight, 0);
+    await expect(page.getByTestId("theme-select")).toHaveValue("dark");
+    expect(await page.evaluate(() => window.suwolTest?.getWorkspaceLayout())).toEqual(persistedLayout);
   } finally {
     await app.close();
   }

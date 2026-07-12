@@ -31,4 +31,17 @@ describe("WorkspaceStore document identity", () => {
     expect(workspace.documents).toEqual([]);
     expect(workspace.active).toBeNull();
   });
+  it("keeps independent viewport state while switching and reordering tabs", () => {
+    const workspace = new WorkspaceStore(), first = workspace.add(EditorSession.create({ name: "One", layerName: "Layer", width: 16, height: 16 })), second = workspace.add(EditorSession.create({ name: "Two", layerName: "Layer", width: 32, height: 32 }));
+    first.view.viewport.zoom = 4;
+    first.view.viewport.panX = -120;
+    second.view.viewport.zoom = 2;
+    second.view.viewport.panX = 80;
+    workspace.activate(first.id);
+    expect(workspace.active?.view.viewport).toMatchObject({ zoom: 4, panX: -120 });
+    workspace.activate(second.id);
+    expect(workspace.active?.view.viewport).toMatchObject({ zoom: 2, panX: 80 });
+    expect(workspace.reorder(second.id, 0)).toBe(true);
+    expect(workspace.documents.map(({ id }) => id)).toEqual([second.id, first.id]);
+  });
 });

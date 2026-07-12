@@ -23,6 +23,7 @@ import {
   pluginStorageGetRequestSchema,
   pluginStorageSetRequestSchema,
   type ApplicationCommandId,
+  type CommandMenuState,
   type FileHandle,
   type DirectoryHandle,
   type ExportFileEntry,
@@ -117,7 +118,7 @@ const api: SuwolDesktopApi = Object.freeze({
         ipcRenderer.removeListener(IPC_CHANNELS.commandInvoke, handler);
     },
     async updateState(
-      state: Readonly<Partial<Record<ApplicationCommandId, boolean>>>,
+      state: Readonly<Partial<Record<ApplicationCommandId, CommandMenuState>>>,
     ) {
       const parsed = commandStateSchema.parse(state);
       const response: unknown = await ipcRenderer.invoke(

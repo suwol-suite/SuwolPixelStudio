@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CommandRegistry } from "@suwol/command-system";
 import type { ApplicationCommandId } from "@suwol/shared";
 import {
@@ -13,8 +13,15 @@ import {
 import type { Translate } from "../i18n";
 import type { WorkspaceDocument, WorkspaceStore } from "../editor/workspace";
 import { CelThumbnailService } from "../editor/thumbnail";
+import { Tooltip } from "./Tooltip";
 
 const thumbnails = new CelThumbnailService();
+
+function TimelineControl({ label, description, shortcut, disabled, disabledReason, testId, pressed, onClick, children }: { readonly label: string; readonly description: string; readonly shortcut?: string; readonly disabled?: boolean; readonly disabledReason?: string; readonly testId?: string; readonly pressed?: boolean; readonly onClick: () => void; readonly children: ReactNode }) {
+  return <Tooltip metadata={{ name: label, description, ...(shortcut === undefined ? {} : { shortcut }), ...(disabled === true && disabledReason !== undefined ? { disabledReason } : {}) }}>
+    {(descriptionId) => <button type="button" aria-label={label} aria-describedby={descriptionId} aria-pressed={pressed} data-testid={testId} disabled={disabled} onClick={onClick}>{children}</button>}
+  </Tooltip>;
+}
 
 function CelThumbnail({ entry, imageId }: { readonly entry: WorkspaceDocument; readonly imageId: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -175,13 +182,11 @@ export function Timeline({
       }}
     >
       <div className="playback-toolbar" role="toolbar" aria-label={t("animation.playback")}>
-        <button type="button" onClick={() => void commands.execute("frame.first")}>|◀</button>
-        <button type="button" onClick={() => void commands.execute("frame.previous")}>◀</button>
-        <button data-testid="play-pause" type="button" aria-pressed={entry.view.playback.isPlaying} onClick={() => void commands.execute("animation.playPause")}>
-          {entry.view.playback.isPlaying ? t("animation.pause") : t("animation.play")}
-        </button>
-        <button type="button" onClick={() => void commands.execute("frame.next")}>▶</button>
-        <button type="button" onClick={() => void commands.execute("frame.last")}>▶|</button>
+        <TimelineControl label={t("frame.first")} description={t("tooltip.frame.navigate")} shortcut="Shift+[" onClick={() => void commands.execute("frame.first")}>|◀</TimelineControl>
+        <TimelineControl label={t("frame.previous")} description={t("tooltip.frame.navigate")} shortcut="[" onClick={() => void commands.execute("frame.previous")}>◀</TimelineControl>
+        <TimelineControl label={entry.view.playback.isPlaying ? t("animation.pause") : t("animation.play")} description={t("tooltip.animation.playback")} shortcut="Enter" testId="play-pause" pressed={entry.view.playback.isPlaying} onClick={() => void commands.execute("animation.playPause")}>{entry.view.playback.isPlaying ? "Ⅱ" : "▶"}</TimelineControl>
+        <TimelineControl label={t("frame.next")} description={t("tooltip.frame.navigate")} shortcut="]" onClick={() => void commands.execute("frame.next")}>▶</TimelineControl>
+        <TimelineControl label={t("frame.last")} description={t("tooltip.frame.navigate")} shortcut="Shift+]" onClick={() => void commands.execute("frame.last")}>▶|</TimelineControl>
         <select
           aria-label={t("animation.mode")}
           value={entry.view.playback.mode}
@@ -194,16 +199,16 @@ export function Timeline({
           <option value="once">{t("animation.once")}</option>
           <option value="pingpong">{t("animation.pingpong")}</option>
         </select>
-        <button data-testid="toggle-onion" type="button" aria-pressed={entry.view.onionSkin.enabled} onClick={() => void commands.execute("animation.toggleOnionSkin")}>{t("animation.onionSkin")}</button>
-        <button type="button" aria-label={t("animation.onionSettings")} onClick={() => void commands.execute("animation.onionSkinSettings")}>⚙</button>
+        <TimelineControl label={t("animation.onionSkin")} description={t("tooltip.animation.onionSkin")} shortcut="O" testId="toggle-onion" pressed={entry.view.onionSkin.enabled} disabled={order.length < 2} disabledReason={t("tooltip.disabled.multipleFrames")} onClick={() => void commands.execute("animation.toggleOnionSkin")}>◉</TimelineControl>
+        <TimelineControl label={t("animation.onionSettings")} description={t("tooltip.animation.onionSettings")} disabled={order.length < 2} disabledReason={t("tooltip.disabled.multipleFrames")} onClick={() => void commands.execute("animation.onionSkinSettings")}>⚙</TimelineControl>
         <span>{order.indexOf(entry.view.activeFrameId) + 1}/{order.length}</span>
         <button data-testid="frame-add" type="button" onClick={() => void commands.execute("frame.add")}>+ {t("frame.new")}</button>
         <button data-testid="frame-duplicate" type="button" onClick={() => void commands.execute("frame.duplicate")}>{t("frame.duplicate")}</button>
         <button data-testid="frame-linked" type="button" onClick={() => void commands.execute("frame.duplicateLinked")}>{t("frame.duplicateLinked")}</button>
         <button data-testid="frame-delete" type="button" disabled={order.length <= 1} onClick={() => void commands.execute("frame.delete")}>{t("frame.delete")}</button>
-        <button type="button" onClick={() => void commands.execute("timeline.zoomOut")}>−</button>
+        <TimelineControl label={t("command.timeline.zoomOut")} description={t("tooltip.timeline.zoom")} onClick={() => void commands.execute("timeline.zoomOut")}>−</TimelineControl>
         <span>{Math.round(entry.view.timeline.zoom * 100)}%</span>
-        <button type="button" onClick={() => void commands.execute("timeline.zoomIn")}>+</button>
+        <TimelineControl label={t("command.timeline.zoomIn")} description={t("tooltip.timeline.zoom")} onClick={() => void commands.execute("timeline.zoomIn")}>+</TimelineControl>
       </div>
       <div className="timeline-tags" aria-label={t("tag.title")}>
         {Object.values(entry.session.model.tags).map((tag) => (

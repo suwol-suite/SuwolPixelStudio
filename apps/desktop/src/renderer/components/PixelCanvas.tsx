@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   applyRasterPoints,
   commitFloodFillComputation,
@@ -91,7 +91,9 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     fillWorkerRef = useRef<Worker | null>(null),
     pluginStrokeRef = useRef<PluginStrokeState | null>(null),
     pluginGenerationRef = useRef(0),
-    spaceRef = useRef(false);
+    spaceRef = useRef(false),
+    [spacePressed, setSpacePressed] = useState(false),
+    [panning, setPanning] = useState(false);
 
   function queuePluginEvent(state: PluginStrokeState, input: unknown): void {
     state.queue = state.queue.then(async () => {
@@ -354,6 +356,20 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     }
     return false;
   }
+  function cancelDrawingForPan(): void {
+    cancelPluginStroke();
+    fillWorkerRef.current?.terminate();
+    fillWorkerRef.current = null;
+    if (strokeRef.current !== null) {
+      entry.session.cancelStroke(strokeRef.current);
+      strokeRef.current = null;
+    }
+    dragRef.current = null;
+    previewPointsRef.current = [];
+    previewFloatingRef.current = null;
+    selectionPreviewRef.current = entry.view.selection.clone();
+    refresh();
+  }
 
   function beginPluginStroke(
     event: React.PointerEvent<HTMLCanvasElement>,
@@ -461,9 +477,18 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     observer.observe(canvas);
     window.addEventListener("resize", resize);
     window.visualViewport?.addEventListener("resize", resize);
+    const wheel = (event: WheelEvent): void => {
+      event.preventDefault();
+      const rect = overlay.getBoundingClientRect();
+      entry.view.viewport.setZoomAt(
+        entry.view.viewport.zoom * (event.deltaY < 0 ? 1.25 : 0.8),
+        { x: event.clientX - rect.left, y: event.clientY - rect.top },
+      );
+      refresh();
+    };
+    overlay.addEventListener("wheel", wheel, { passive: false });
     resize();
     const keyDown = (event: KeyboardEvent) => {
-      if (event.code === "Space") spaceRef.current = true;
       const target = event.target;
       if (
         target instanceof HTMLInputElement ||
@@ -471,6 +496,13 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
         (target instanceof HTMLElement && target.isContentEditable)
       )
         return;
+      if (event.code === "Space") {
+        if (!spaceRef.current) cancelDrawingForPan();
+        spaceRef.current = true;
+        setSpacePressed(true);
+        event.preventDefault();
+        return;
+      }
       if (event.key === "Escape") {
         if (!cancelTransient()) {
           entry.view.selection.clear();
@@ -526,7 +558,7 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
       }
     };
     const keyUp = (event: KeyboardEvent) => {
-      if (event.code === "Space") spaceRef.current = false;
+      if (event.code === "Space") { spaceRef.current = false; setSpacePressed(false); }
     };
     window.addEventListener("keydown", keyDown);
     window.addEventListener("keyup", keyUp);
@@ -535,6 +567,7 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
       observer.disconnect();
       window.removeEventListener("resize", resize);
       window.visualViewport?.removeEventListener("resize", resize);
+      overlay.removeEventListener("wheel", wheel);
       renderer.dispose();
       rendererRef.current = null;
       fillWorkerRef.current?.terminate();
@@ -573,8 +606,11 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     if (entry.view.playback.isPlaying) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     updateHover(event);
-    if (event.button === 1 || spaceRef.current) {
+    if (event.button === 1 || (event.button === 0 && spaceRef.current)) {
+      event.preventDefault();
+      cancelDrawingForPan();
       panRef.current = canvasPoint(event);
+      setPanning(true);
       return;
     }
     const point = pixelPoint(event);
@@ -763,6 +799,12 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
   ): void {
     updateHover(event);
     const screen = canvasPoint(event);
+    if (panRef.current === null && spaceRef.current && (event.buttons & 1) !== 0) {
+      cancelDrawingForPan();
+      panRef.current = screen;
+      setPanning(true);
+      return;
+    }
     if (panRef.current !== null) {
       entry.view.viewport.panBy(
         screen.x - panRef.current.x,
@@ -821,6 +863,7 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
   }
   function finishPointer(event: React.PointerEvent<HTMLCanvasElement>): void {
     panRef.current = null;
+    setPanning(false);
     if (finishPluginStroke()) {
       if (event.currentTarget.hasPointerCapture(event.pointerId))
         event.currentTarget.releasePointerCapture(event.pointerId);
@@ -891,7 +934,7 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
       event.currentTarget.releasePointerCapture(event.pointerId);
   }
   return (
-    <div className="pixel-canvas-host" data-testid="pixel-canvas-host">
+    <div className={`pixel-canvas-host ${spacePressed || panning ? "pan-ready" : ""} ${panning ? "panning" : ""}`} data-testid="pixel-canvas-host" data-pan-state={panning ? "grabbing" : spacePressed ? "grab" : "idle"}>
       <canvas
         ref={canvasRef}
         className="pixel-canvas"
@@ -905,6 +948,7 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
         tabIndex={0}
         aria-label={t("canvas.label")}
         onContextMenu={(event) => event.preventDefault()}
+        onAuxClick={(event) => event.preventDefault()}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={finishPointer}
@@ -915,15 +959,6 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
         onPointerLeave={() => {
           hoverRef.current = null;
           renderOverlay();
-        }}
-        onWheel={(event) => {
-          event.preventDefault();
-          const point = canvasPoint(event);
-          entry.view.viewport.setZoomAt(
-            entry.view.viewport.zoom * (event.deltaY < 0 ? 1.25 : 0.8),
-            point,
-          );
-          refresh();
         }}
       />
       <div className="sr-live" aria-live="polite">

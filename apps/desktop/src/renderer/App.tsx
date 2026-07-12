@@ -79,6 +79,7 @@ import { PanelRegistry } from "@suwol/ui";
 import {
   DEFAULT_KEYBINDINGS,
   DEFAULT_SETTINGS,
+  ANIMATION_LAYOUT,
   NATIVE_MENU_COMMAND_IDS,
   PANEL_IDS,
   SETTINGS_STORAGE_KEY,
@@ -92,6 +93,10 @@ import {
   parseWorkspaceLayout,
   serializeWorkspaceLayout,
   layoutPanelIds,
+  setLayoutPanelVisibility,
+  setRightDockVisibility,
+  STATIC_EDITING_LAYOUT,
+  TILEMAP_LAYOUT,
   normalizeShortcut,
   parseKeybindingSettings,
   serializeKeybindingSettings,
@@ -104,6 +109,7 @@ import {
   type RecoverySnapshotInfo,
   type ThemeMode,
   type UiScale,
+  type WorkspaceLayout,
 } from "@suwol/shared";
 import { AboutDialog } from "./components/AboutDialog";
 import { CloseDocumentDialog } from "./components/CloseDocumentDialog";
@@ -237,24 +243,66 @@ export function App() {
         setSettings((current) => normalizeSettings({ ...current, uiScale })),
       [],
     ),
+    applyWorkspaceLayout = useCallback(
+      (layout: WorkspaceLayout, activeLayoutId?: string) => {
+        const visible = new Set(layoutPanelIds(layout)),
+          visibility = Object.fromEntries(PANEL_IDS.map((id) => [id, visible.has(id)])) as Record<PanelId, boolean>;
+        panels.restoreVisibility(visibility);
+        setSettings((current) => normalizeSettings({
+          ...current,
+          workspaceLayout: layout,
+          panels: visibility,
+          rightPanelWidth: layout.rightDockWidth,
+          timelineHeight: layout.timelineHeight,
+          ...(activeLayoutId === undefined ? {} : { activeLayoutId }),
+        }));
+      },
+      [panels],
+    ),
+    switchWorkspaceLayout = useCallback(
+      (preset: WorkspaceLayout) => {
+        const current = settingsRef.current,
+          savedLayouts = [
+            ...current.layouts.filter((layout) => layout.id !== current.activeLayoutId),
+            { ...structuredClone(current.workspaceLayout), id: current.activeLayoutId },
+          ],
+          target = structuredClone(
+            savedLayouts.find((layout) => layout.id === preset.id) ?? preset,
+          ),
+          visible = new Set(layoutPanelIds(target)),
+          visibility = Object.fromEntries(PANEL_IDS.map((id) => [id, visible.has(id)])) as Record<PanelId, boolean>;
+        panels.restoreVisibility(visibility);
+        setSettings(normalizeSettings({
+          ...current,
+          workspaceLayout: target,
+          panels: visibility,
+          layouts: savedLayouts,
+          activeLayoutId: target.id,
+          rightPanelWidth: target.rightDockWidth,
+          timelineHeight: target.timelineHeight,
+        }));
+      },
+      [panels],
+    ),
     togglePanel = useCallback(
       (id: PanelId) => {
-        if (panels.toggle(id))
+        if (panels.toggle(id)) {
+          const visible = panels.isVisible(id);
           setSettings((current) =>
             normalizeSettings({
               ...current,
               panels: panels.exportVisibility(),
+              workspaceLayout: setLayoutPanelVisibility(current.workspaceLayout, id, visible),
             }),
           );
+        }
       },
       [panels],
     ),
     resetWorkspace = useCallback(() => {
-      panels.reset();
-      setSettings((current) => ({
-        ...resetLayout(current),
-        panels: panels.exportVisibility(),
-      }));
+      const next = resetLayout(settingsRef.current);
+      panels.restoreVisibility(next.panels);
+      setSettings(next);
     }, [panels]);
 
   function editable(entry = workspace.active): boolean {
@@ -408,7 +456,7 @@ export function App() {
     try {
       const bytes = await serializeSuwolPixelAsync(
         snapshot,
-        desktopInfo?.version ?? "0.6.0-rc.7",
+        desktopInfo?.version ?? "1.0.1-rc.1",
       );
       await api.files.writeAtomic(handle, toArrayBuffer(bytes));
       entry.session.markSaved(revision);
@@ -487,11 +535,13 @@ export function App() {
       const result = await api.files.showOpenDialog({ kind: "layout" });
       if (result.canceled) return;
       const layout = parseWorkspaceLayout(JSON.parse(new TextDecoder().decode(await api.files.read(result.handle))) as unknown);
-      setSettings((current) => normalizeSettings({ ...current, layouts: [...current.layouts.filter((item) => item.id !== layout.id), layout], activeLayoutId: layout.id }));
+      const visible = new Set(layoutPanelIds(layout));
+      panels.restoreVisibility(Object.fromEntries(PANEL_IDS.map((id) => [id, visible.has(id)])));
+      setSettings((current) => normalizeSettings({ ...current, workspaceLayout: layout, layouts: [...current.layouts.filter((item) => item.id !== layout.id), layout], activeLayoutId: layout.id }));
     } catch { setMessage(tRef.current("error.fileOpen")); }
   }
   async function exportLayoutSettings(layoutId: string): Promise<void> {
-    const api = window.suwolDesktop, layout = settingsRef.current.layouts.find((item) => item.id === layoutId);
+    const api = window.suwolDesktop, layout = layoutId === settingsRef.current.activeLayoutId ? settingsRef.current.workspaceLayout : settingsRef.current.layouts.find((item) => item.id === layoutId);
     if (api === undefined || layout === undefined) return;
     try { const result = await api.files.showSaveDialog({ kind: "layout", suggestedName: `${layout.name}.suwollayout` }); if (!result.canceled) await api.files.writeAtomic(result.handle, toArrayBuffer(new TextEncoder().encode(serializeWorkspaceLayout(layout)))); }
     catch { setMessage(tRef.current("error.fileSave")); }
@@ -1592,7 +1642,7 @@ export function App() {
         titleKey: "command.animation.toggleOnionSkin",
         category: "category.frame",
         defaultKeybindings: binding("animation.toggleOnionSkin"),
-        canExecute: () => animationCommandReady(),
+        canExecute: () => animationCommandReady() && (workspace.active?.session.model.frameOrder.length ?? 0) > 1,
         isChecked: () => workspace.active?.view.onionSkin.enabled ?? false,
         execute: () => {
           const entry = workspace.active;
@@ -1606,7 +1656,7 @@ export function App() {
         id: "animation.onionSkinSettings",
         titleKey: "command.animation.onionSkinSettings",
         category: "category.frame",
-        canExecute: () => animationCommandReady(),
+        canExecute: () => animationCommandReady() && (workspace.active?.session.model.frameOrder.length ?? 0) > 1,
         execute: () => setOnionSettingsOpen(true),
       },
       {
@@ -1712,12 +1762,12 @@ export function App() {
         canExecute: () => true,
         execute: resetWorkspace,
       },
-      ...(["zoomIn", "zoomOut", "zoom100", "zoomFit"] as const).map(
+      ...(["zoomIn", "zoomOut", "zoom100", "zoomFit", "centerCanvas"] as const).map(
         (action): CommandDefinition => ({
           id: `view.${action}`,
           titleKey: `command.view.${action}`,
           category: "category.view",
-          ...(action === "zoomFit"
+          ...(action === "zoomFit" || action === "centerCanvas"
             ? {}
             : {
                 defaultKeybindings: binding(
@@ -1735,7 +1785,8 @@ export function App() {
             if (action === "zoomIn") viewport.zoomIn();
             else if (action === "zoomOut") viewport.zoomOut();
             else if (action === "zoom100") viewport.zoom100();
-            else viewport.fit();
+            else if (action === "zoomFit") viewport.fit();
+            else viewport.center();
             workspace.touch();
           },
         }),
@@ -1749,6 +1800,14 @@ export function App() {
         execute: () => togglePanel("tools"),
       },
       {
+        id: "window.toggleRightDock",
+        titleKey: "command.window.toggleRightDock",
+        category: "category.window",
+        canExecute: () => true,
+        isChecked: () => settingsRef.current.workspaceLayout.rightDockVisible,
+        execute: () => applyWorkspaceLayout(setRightDockVisibility(settingsRef.current.workspaceLayout, !settingsRef.current.workspaceLayout.rightDockVisible)),
+      },
+      {
         id: "window.toggleLayers",
         titleKey: "command.window.toggleLayers",
         category: "category.window",
@@ -1756,6 +1815,21 @@ export function App() {
         isChecked: () => panels.isVisible("layers"),
         execute: () => togglePanel("layers"),
       },
+      ...(
+        [
+          ["window.togglePalette", "palette"],
+          ["window.toggleProperties", "properties"],
+          ["window.togglePreview", "preview"],
+          ["window.toggleTilesets", "tilesets"],
+        ] as const
+      ).map(([id, panelId]): CommandDefinition => ({
+        id,
+        titleKey: `command.${id}`,
+        category: "category.window",
+        canExecute: () => true,
+        isChecked: () => panels.isVisible(panelId),
+        execute: () => togglePanel(panelId),
+      })),
       {
         id: "window.toggleTimeline",
         titleKey: "command.window.toggleTimeline",
@@ -1764,6 +1838,20 @@ export function App() {
         isChecked: () => panels.isVisible("timeline"),
         execute: () => togglePanel("timeline"),
       },
+      ...(
+        [
+          ["window.applyStaticLayout", STATIC_EDITING_LAYOUT],
+          ["window.applyAnimationLayout", ANIMATION_LAYOUT],
+          ["window.applyTilemapLayout", TILEMAP_LAYOUT],
+        ] as const
+      ).map(([id, layout]): CommandDefinition => ({
+        id,
+        titleKey: `command.${id}`,
+        category: "category.window",
+        canExecute: () => true,
+        isChecked: () => settingsRef.current.activeLayoutId === layout.id,
+        execute: () => switchWorkspaceLayout(layout),
+      })),
       ...toolDefinitions,
       {
         id: "layer.add",
@@ -2104,6 +2192,7 @@ export function App() {
       for (const dispose of unregister) dispose();
     };
   }, [
+    applyWorkspaceLayout,
     changeScale,
     changeTheme,
     commands,
@@ -2112,6 +2201,7 @@ export function App() {
     recoveryItems.length,
     pluginController,
     resetWorkspace,
+    switchWorkspaceLayout,
     togglePanel,
     workspace,
   ]);
@@ -2144,7 +2234,7 @@ export function App() {
     const api = window.suwolDesktop;
     if (api === undefined) return;
     const state = Object.fromEntries(
-      NATIVE_MENU_COMMAND_IDS.map((id) => [id, commands.canExecute(id)]),
+      NATIVE_MENU_COMMAND_IDS.map((id) => [id, { enabled: commands.canExecute(id), checked: commands.get(id)?.isChecked?.() ?? false }]),
     );
     void api.commands.updateState(state);
   }, [commands, pluginVersion, recoveryItems.length, workspaceVersion]);
@@ -2184,7 +2274,7 @@ export function App() {
       for (const entry of dirty) {
         const snapshot = entry.session.snapshot(),
           revision = snapshot.model.revision;
-        void serializeSuwolPixelAsync(snapshot, desktopInfo?.version ?? "0.6.0-rc.7")
+        void serializeSuwolPixelAsync(snapshot, desktopInfo?.version ?? "1.0.1-rc.1")
           .then(async (data) => {
             let thumbnail: ArrayBuffer | undefined;
             try {
@@ -2316,6 +2406,7 @@ export function App() {
                 panY: workspace.active.view.viewport.panY,
                 zoom: workspace.active.view.viewport.zoom,
               },
+        getWorkspaceLayout: () => structuredClone(settingsRef.current.workspaceLayout),
         getAnimationState: () => {
           const entry = workspace.active;
           if (entry === null) return null;
@@ -2374,13 +2465,17 @@ export function App() {
     };
   }, [commands, pluginController, workspace]);
 
-  function resize(dimension: "left" | "right" | "timeline", value: number) {
+  function resize(dimension: "right" | "timeline", value: number) {
     setSettings((current) =>
       normalizeSettings({
         ...current,
-        ...(dimension === "left" ? { leftPanelWidth: value } : {}),
         ...(dimension === "right" ? { rightPanelWidth: value } : {}),
         ...(dimension === "timeline" ? { timelineHeight: value } : {}),
+        workspaceLayout: {
+          ...current.workspaceLayout,
+          ...(dimension === "right" ? { rightDockWidth: value } : {}),
+          ...(dimension === "timeline" ? { timelineHeight: value } : {}),
+        },
       }),
     );
   }
@@ -2410,7 +2505,6 @@ export function App() {
       )}
       <EditorShell
         settings={settings}
-        panels={panels}
         commands={commands}
         workspace={workspace}
         status={status}
@@ -2422,6 +2516,7 @@ export function App() {
           )
         }
         onResize={resize}
+        onLayoutChange={(layout) => applyWorkspaceLayout(layout)}
         onCloseDocument={requestClose}
         pluginOverlays={pluginController.snapshot.overlays.map((entry) => entry.update)}
         pluginTools={pluginController.snapshot.tools}
@@ -2500,17 +2595,11 @@ export function App() {
           activeId={settings.activeLayoutId}
           onActive={(id) => {
             const layout = settingsRef.current.layouts.find((item) => item.id === id);
-            if (layout !== undefined) {
-              const visible = new Set(layoutPanelIds(layout));
-              panels.restoreVisibility(Object.fromEntries(PANEL_IDS.map((panelId) => [panelId, visible.has(panelId)])));
-              setSettings((current) => normalizeSettings({ ...current, activeLayoutId: id, panels: panels.exportVisibility() }));
-            }
+            if (layout !== undefined) applyWorkspaceLayout(structuredClone(layout), id);
           }}
           onSave={(name) => {
-            const source = settingsRef.current.layouts.find((item) => item.id === settingsRef.current.activeLayoutId) ?? settingsRef.current.layouts[0];
-            if (source === undefined) return;
-            const layout = { ...structuredClone(source), id: crypto.randomUUID(), name: name.trim() || tRef.current("layout.untitled") };
-            setSettings((current) => normalizeSettings({ ...current, layouts: [...current.layouts, layout], activeLayoutId: layout.id }));
+            const layout = { ...structuredClone(settingsRef.current.workspaceLayout), id: crypto.randomUUID(), name: name.trim() || tRef.current("layout.untitled") };
+            setSettings((current) => normalizeSettings({ ...current, workspaceLayout: layout, layouts: [...current.layouts, layout], activeLayoutId: layout.id }));
           }}
           onDuplicate={(id) => {
             const source = settingsRef.current.layouts.find((item) => item.id === id);
@@ -2719,7 +2808,7 @@ export function App() {
                 keybindings: DEFAULT_SETTINGS.keybindings,
               }));
             } else {
-              panels.reset();
+              panels.restoreVisibility(DEFAULT_SETTINGS.panels);
               setSettings(DEFAULT_SETTINGS);
             }
           }}

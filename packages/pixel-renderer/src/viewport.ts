@@ -85,9 +85,13 @@ export class Viewport {
       anchor,
     );
   }
-  zoom100(): void {
-    this.zoom = 1;
-    this.center();
+  zoom100(
+    anchor: IntPoint = {
+      x: this.viewportWidth / 2,
+      y: this.viewportHeight / 2,
+    },
+  ): void {
+    this.setZoomAt(1, anchor);
   }
   panBy(deltaX: number, deltaY: number): void {
     this.panX += deltaX;

@@ -88,8 +88,13 @@ export const appDiagnosticsSchema = z
 export type AppDiagnostics = z.infer<typeof appDiagnosticsSchema>;
 
 export const applicationCommandIdSchema = z.enum(APPLICATION_COMMAND_IDS);
+export const commandMenuStateSchema = z.union([
+  z.boolean(),
+  z.object({ enabled: z.boolean(), checked: z.boolean().optional() }).strict(),
+]);
+export type CommandMenuState = z.infer<typeof commandMenuStateSchema>;
 export const commandStateSchema = z
-  .record(z.string(), z.boolean())
+  .record(z.string(), commandMenuStateSchema)
   .superRefine((value, context) => {
     for (const key of Object.keys(value))
       if (!applicationCommandIdSchema.safeParse(key).success)
@@ -323,7 +328,7 @@ export interface SuwolDesktopApi {
   readonly commands: Readonly<{
     onInvoke(listener: (commandId: ApplicationCommandId) => void): () => void;
     updateState(
-      state: Readonly<Partial<Record<ApplicationCommandId, boolean>>>,
+      state: Readonly<Partial<Record<ApplicationCommandId, CommandMenuState>>>,
     ): Promise<void>;
   }>;
   readonly files: Readonly<{

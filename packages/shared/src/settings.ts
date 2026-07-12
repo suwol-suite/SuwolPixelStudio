@@ -1,9 +1,16 @@
 import { z } from "zod";
-import { DEFAULT_WORKSPACE_LAYOUT, recoverWorkspaceLayout, type WorkspaceLayout } from "./layout";
+import {
+  BUILTIN_WORKSPACE_LAYOUTS,
+  DEFAULT_WORKSPACE_LAYOUT,
+  layoutPanelIds,
+  recoverWorkspaceLayout,
+  setLayoutPanelVisibility,
+  type WorkspaceLayout,
+} from "./layout";
 import { KEYBINDING_SCHEMA_VERSION, parseKeybindingSettings, type KeybindingSettings } from "./keybindings";
 
 export const SETTINGS_STORAGE_KEY = "suwol.pixel-studio.settings";
-export const SETTINGS_SCHEMA_VERSION = 2 as const;
+export const SETTINGS_SCHEMA_VERSION = 4 as const;
 
 export const THEME_MODES = ["system", "dark", "light"] as const;
 export const LANGUAGE_MODES = ["auto", "ko", "en"] as const;
@@ -32,7 +39,7 @@ export const uiScaleSchema = z.union(
 );
 
 const persistedSettingsSchema = z.object({
-  version: z.union([z.literal(1), z.literal(SETTINGS_SCHEMA_VERSION)]),
+  version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(SETTINGS_SCHEMA_VERSION)]),
   theme: z.unknown().optional(),
   language: z.unknown().optional(),
   uiScale: z.unknown().optional(),
@@ -40,6 +47,7 @@ const persistedSettingsSchema = z.object({
   leftPanelWidth: z.unknown().optional(),
   rightPanelWidth: z.unknown().optional(),
   timelineHeight: z.unknown().optional(),
+  workspaceLayout: z.unknown().optional(),
   recentColors: z.unknown().optional(),
   layouts: z.unknown().optional(),
   activeLayoutId: z.unknown().optional(),
@@ -57,6 +65,7 @@ export interface AppSettings {
   readonly leftPanelWidth: number;
   readonly rightPanelWidth: number;
   readonly timelineHeight: number;
+  readonly workspaceLayout: WorkspaceLayout;
   readonly recentColors: readonly (readonly [number, number, number, number])[];
   readonly layouts: readonly WorkspaceLayout[];
   readonly activeLayoutId: string;
@@ -91,16 +100,17 @@ export const DEFAULT_SETTINGS: AppSettings = Object.freeze({
     palette: true,
     properties: true,
     preview: true,
-    timeline: true,
-    brushes: true,
-    tilesets: true,
-    slices: true,
+    timeline: false,
+    brushes: false,
+    tilesets: false,
+    slices: false,
   }),
-  leftPanelWidth: 64,
-  rightPanelWidth: 280,
+  leftPanelWidth: 48,
+  rightPanelWidth: 320,
   timelineHeight: 180,
+  workspaceLayout: DEFAULT_WORKSPACE_LAYOUT,
   recentColors: Object.freeze([]),
-  layouts: Object.freeze([DEFAULT_WORKSPACE_LAYOUT]),
+  layouts: BUILTIN_WORKSPACE_LAYOUTS,
   activeLayoutId: DEFAULT_WORKSPACE_LAYOUT.id,
   keybindings: Object.freeze({ schemaVersion: KEYBINDING_SCHEMA_VERSION, preset: "suwol-default", entries: Object.freeze([]) }),
   brushPresets: Object.freeze([]),
@@ -134,14 +144,6 @@ export function normalizeSettings(input: unknown): AppSettings {
     typeof root.data.panels === "object" && root.data.panels !== null
       ? (root.data.panels as Readonly<Record<string, unknown>>)
       : {};
-  const panels = Object.fromEntries(
-    PANEL_IDS.map((id) => [
-      id,
-      typeof incomingPanels[id] === "boolean"
-        ? incomingPanels[id]
-        : DEFAULT_SETTINGS.panels[id],
-    ]),
-  ) as Record<PanelId, boolean>;
 
   const rgba = z.tuple([
       z.number().int().min(0).max(255),
@@ -159,17 +161,33 @@ export function normalizeSettings(input: unknown): AppSettings {
           )
         : [],
     layoutInput = Array.isArray(root.data.layouts) ? root.data.layouts.slice(0, 50) : [],
-    layouts = layoutInput.length === 0
-      ? [structuredClone(DEFAULT_WORKSPACE_LAYOUT)]
-      : layoutInput.map(recoverWorkspaceLayout).filter((layout, index, all) => all.findIndex((item) => item.id === layout.id) === index),
+    recoveredLayouts = layoutInput.map(recoverWorkspaceLayout),
+    layouts = [...recoveredLayouts, ...BUILTIN_WORKSPACE_LAYOUTS.map((layout) => structuredClone(layout))]
+      .filter((layout, index, all) => all.findIndex((item) => item.id === layout.id) === index),
     activeLayoutId = typeof root.data.activeLayoutId === "string" && layouts.some((layout) => layout.id === root.data.activeLayoutId)
       ? root.data.activeLayoutId
-      : (layouts[0]?.id ?? DEFAULT_WORKSPACE_LAYOUT.id),
+      : DEFAULT_WORKSPACE_LAYOUT.id,
     keybindings = (() => { try { return parseKeybindingSettings(root.data.keybindings); } catch { return DEFAULT_SETTINGS.keybindings; } })(),
     brushSchema = z.object({ id: z.string().min(1).max(128), name: z.string().min(1).max(100), kind: z.enum(["square", "circle", "custom"]), width: z.number().int().min(1).max(64), height: z.number().int().min(1).max(64), opacity: z.number().min(0).max(1), spacing: z.number().min(1).max(256), angle: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]), flipX: z.boolean(), flipY: z.boolean(), center: z.object({ x: z.number().int(), y: z.number().int() }).strict(), mask: z.string().max(1024).optional() }).strict(),
     parsedBrushes = z.array(brushSchema).max(100).safeParse(root.data.brushPresets),
     symmetrySchema = z.object({ mode: z.enum(["off", "horizontal", "vertical", "both"]), axisX: z.number().min(-8192).max(16384), axisY: z.number().min(-8192).max(16384) }).strict(),
     parsedSymmetry = symmetrySchema.safeParse(root.data.symmetry);
+  let workspaceLayout = root.data.workspaceLayout === undefined
+    ? structuredClone(recoveredLayouts.find((layout) => layout.id === activeLayoutId) ?? DEFAULT_WORKSPACE_LAYOUT)
+    : recoverWorkspaceLayout(root.data.workspaceLayout);
+  if (root.data.version < SETTINGS_SCHEMA_VERSION) {
+    for (const id of PANEL_IDS) {
+      const visible = incomingPanels[id];
+      if (typeof visible === "boolean") workspaceLayout = setLayoutPanelVisibility(workspaceLayout, id, visible);
+    }
+    workspaceLayout = recoverWorkspaceLayout({
+      ...workspaceLayout,
+      rightDockWidth: clampNumber(root.data.rightPanelWidth, workspaceLayout.rightDockWidth, 220, 720),
+      timelineHeight: clampNumber(root.data.timelineHeight, workspaceLayout.timelineHeight, 112, 420),
+    });
+  }
+  const visiblePanels = new Set(layoutPanelIds(workspaceLayout)),
+    panels = Object.fromEntries(PANEL_IDS.map((id) => [id, visiblePanels.has(id)])) as Record<PanelId, boolean>;
   return {
     version: SETTINGS_SCHEMA_VERSION,
     theme: parsedOrDefault(
@@ -188,24 +206,10 @@ export function normalizeSettings(input: unknown): AppSettings {
       DEFAULT_SETTINGS.uiScale,
     ),
     panels,
-    leftPanelWidth: clampNumber(
-      root.data.leftPanelWidth,
-      DEFAULT_SETTINGS.leftPanelWidth,
-      52,
-      280,
-    ),
-    rightPanelWidth: clampNumber(
-      root.data.rightPanelWidth,
-      DEFAULT_SETTINGS.rightPanelWidth,
-      220,
-      520,
-    ),
-    timelineHeight: clampNumber(
-      root.data.timelineHeight,
-      DEFAULT_SETTINGS.timelineHeight,
-      112,
-      360,
-    ),
+    leftPanelWidth: DEFAULT_SETTINGS.leftPanelWidth,
+    rightPanelWidth: workspaceLayout.rightDockWidth,
+    timelineHeight: workspaceLayout.timelineHeight,
+    workspaceLayout,
     recentColors,
     layouts,
     activeLayoutId,

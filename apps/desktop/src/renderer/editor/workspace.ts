@@ -225,6 +225,16 @@ export class WorkspaceStore {
     this.touch();
     return true;
   }
+  reorder(id: DocumentId, targetIndex: number): boolean {
+    const current = this.#order.indexOf(id);
+    if (current < 0) return false;
+    const next = Math.max(0, Math.min(this.#order.length - 1, targetIndex));
+    if (current === next) return true;
+    this.#order.splice(current, 1);
+    this.#order.splice(next, 0, id);
+    this.touch();
+    return true;
+  }
   close(id: DocumentId): boolean {
     const entry = this.#documents.get(id);
     if (entry === undefined || entry.saving || entry.session.transactionActive)

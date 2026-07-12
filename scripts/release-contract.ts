@@ -149,7 +149,7 @@ async function validateZip(file: string, platform: "win" | "linux" | "mac"): Pro
     for (const suffix of [
       ".app/Contents/MacOS/SuwolPixelStudio",
       ".app/Contents/Resources/app.asar",
-      ".app/Contents/Resources/electron.icns",
+      ".app/Contents/Resources/icon.icns",
     ]) if (!hasSuffix(entries, suffix)) throw new Error(`macOS ZIP is missing ${suffix}.`);
   }
 }

@@ -192,9 +192,12 @@ export function registerIpcHandlers(
         error: { code: "INVALID_INPUT", message: "Command state is invalid." },
       } satisfies IpcResult<null>;
     const menu = Menu.getApplicationMenu();
-    for (const [id, enabled] of Object.entries(parsed.data)) {
+    for (const [id, state] of Object.entries(parsed.data)) {
       const item = menu?.getMenuItemById(id);
-      if (item !== undefined && item !== null) item.enabled = enabled;
+      if (item !== undefined && item !== null) {
+        item.enabled = typeof state === "boolean" ? state : state.enabled;
+        if (typeof state !== "boolean" && state.checked !== undefined) item.checked = state.checked;
+      }
     }
     return success(null);
   });

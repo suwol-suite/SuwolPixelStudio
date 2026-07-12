@@ -46,13 +46,13 @@ async function createMainWindow(): Promise<BrowserWindow> {
     show: false,
     backgroundColor: "#17191d",
     title: "Suwol Pixel Studio",
-    ...(process.platform === "linux"
+    ...(process.platform !== "darwin"
       ? {
           icon: app.isPackaged
-            ? path.join(process.resourcesPath, "studio.suwol.pixel.png")
+            ? path.join(process.resourcesPath, process.platform === "win32" ? "icon.ico" : "studio.suwol.pixel.png")
             : path.join(
                 app.getAppPath(),
-                "apps/desktop/assets/linux/studio.suwol.pixel.png",
+                process.platform === "win32" ? "apps/desktop/assets/icon.ico" : "apps/desktop/assets/linux/studio.suwol.pixel.png",
               ),
         }
       : {}),

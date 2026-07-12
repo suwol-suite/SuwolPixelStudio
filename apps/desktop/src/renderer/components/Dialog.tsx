@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { Icon } from "./Icon";
+import { Tooltip } from "./Tooltip";
 
 interface DialogProps {
   readonly title: string;
@@ -78,14 +79,19 @@ export function Dialog({
       >
         <header className="dialog-header">
           <h2 id={titleId}>{title}</h2>
-          <button
-            className="icon-button"
-            type="button"
-            aria-label={closeLabel}
-            onClick={onClose}
-          >
-            <Icon name="close" />
-          </button>
+          <Tooltip metadata={{ name: closeLabel, description: closeLabel }}>
+            {(descriptionId) => (
+              <button
+                className="icon-button"
+                type="button"
+                aria-label={closeLabel}
+                aria-describedby={descriptionId}
+                onClick={onClose}
+              >
+                <Icon name="close" />
+              </button>
+            )}
+          </Tooltip>
         </header>
         {children}
       </div>

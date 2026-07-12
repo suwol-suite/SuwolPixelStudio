@@ -103,13 +103,14 @@ describe("IPC contracts", () => {
   it("accepts only typed native command state updates", () => {
     expect(
       commandStateSchema.safeParse({
-        "edit.copy": true,
+        "edit.copy": { enabled: true, checked: false },
         "sprite.canvasResize": false,
       }).success,
     ).toBe(true);
     expect(commandStateSchema.safeParse({ "shell.raw": true }).success).toBe(
       false,
     );
+    expect(commandStateSchema.safeParse({ "window.togglePreview": { enabled: true, checked: true } }).success).toBe(true);
   });
 
   it("allows credential-free HTTPS URLs", () => {

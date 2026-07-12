@@ -1,9 +1,12 @@
 # Suwol Pixel Studio
 
-Suwol Pixel Studio is a byte-exact desktop pixel editor built with Electron, React, and TypeScript. The current implementation is **v0.6.0-rc.7 / M6 — 1.0 Release Readiness**.
+Suwol Pixel Studio is a byte-exact desktop pixel editor built with Electron, React, and TypeScript. The current implementation is **v1.0.1-rc.1 / RC9 — Workspace UX and Packaging Icon Release Candidate**.
 
-## M6 focus
+## RC9 focus
 
+- Two-group right Dock with tab activation, reorder, cross-group movement, close/reopen, resizing, and persisted workspace presets
+- Contextual Properties and a nearest-neighbor active-frame Preview without duplicating Timeline controls
+- Explicit `.icns`, `.ico`, and Linux PNG connections across Forge, BrowserWindow, document metadata, DMG, and AppImage packaging
 - File-format v4, recovery, plugin sandbox, renderer resource, accessibility, and localization regression hardening
 - Reproducible Windows, macOS, and Linux packaging workflows with checksums and explicit signing policy
 - Release, user-guide, Plugin SDK, license, and third-party notice documentation for repeatable release candidates
@@ -24,7 +27,7 @@ M1–M4 editing, animation, export, recovery, and Plugin API 1.0 compatibility r
 
 ## Development and verification
 
-Node.js 22.12+ and pnpm 11+ are required.
+Node.js 22.13+ and pnpm 11+ are required.
 
 ```bash
 pnpm install
@@ -67,7 +70,7 @@ Plugins remain unsigned, so installation displays an explicit warning. Windows d
 
 ## Scope
 
-M6 does not add collaboration, AI generation, marketplace/plugin signing infrastructure, scripting languages, vector editing, or external-engine-specific tilemap exporters.
+RC9 does not add collaboration, AI generation, marketplace/plugin signing infrastructure, scripting languages, vector editing, native floating panels, or external-engine-specific tilemap exporters.
 
 ## License
 

@@ -108,7 +108,11 @@ jobs:
           trap 'hdiutil detach "$device" >/dev/null' EXIT
           dmg_app="$(find "$mount_point" -type d -name '*.app' -print -quit)"
           test -n "$dmg_app"
-          cmp apps/desktop/assets/icon.icns "$dmg_app/Contents/Resources/electron.icns"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$dmg_app/Contents/Info.plist")" = "icon.icns"
+          cmp apps/desktop/assets/icon.icns "$dmg_app/Contents/Resources/icon.icns"
+          if test -f "$dmg_app/Contents/Resources/electron.icns"; then
+            cmp apps/desktop/assets/icon.icns "$dmg_app/Contents/Resources/electron.icns"
+          fi
           hdiutil detach "$device" >/dev/null
           trap - EXIT
       - name: Prepare and validate macOS assets

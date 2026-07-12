@@ -29,8 +29,8 @@ measure("256×256 Tilemap visible range render", () => { for (let index = 0; ind
 measure("Plugin overlay 1,000 primitive validation", () => { validateOverlayUpdate({ overlayId: "com.example.overlay", lifetimeMs: 1000, primitives: Array.from({ length: 1000 }, (_, index) => ({ kind: "rect", rect: { x: index % 64, y: Math.floor(index / 64), width: 1, height: 1 }, style: { color: [255, 255, 255, 255] } })) }, { width: 256, height: 256 }); });
 const keybindings: KeybindingSettings = { schemaVersion: 1, preset: "suwol-default", entries: Array.from({ length: 500 }, (_, index) => ({ commandId: `benchmark.command.${index}`, context: "canvas", shortcuts: [`Ctrl+${String.fromCharCode(65 + index % 26)}`] })) };
 measure("Keybinding 500 conflict scan", () => { findKeybindingConflicts(keybindings); });
-const tabs = (prefix: string, count: number) => ({ type: "tabs" as const, id: `${prefix}-tabs`, edge: "right" as const, panelIds: Array.from({ length: count }, (_, index) => `${prefix}.panel.${index}`), activePanelId: `${prefix}.panel.0`, size: 300 });
-measure("Layout 100 panel validation", () => { parseWorkspaceLayout({ schemaVersion: 1, id: "benchmark-layout", name: "Benchmark", root: { type: "split", id: "benchmark-root", direction: "horizontal", ratio: .5, first: tabs("left", 50), second: tabs("right", 50) }, hiddenPanelIds: [] }); });
+const tabs = (prefix: string, count: number) => ({ panelIds: Array.from({ length: count }, (_, index) => `${prefix}.panel.${index}`), activePanelId: `${prefix}.panel.0` });
+measure("Layout 100 panel validation", () => { parseWorkspaceLayout({ schemaVersion: 3, id: "benchmark-layout", name: "Benchmark", toolsVisible: true, rightDockVisible: true, rightDockWidth: 320, upperGroup: tabs("upper", 50), lowerGroup: tabs("lower", 50), rightSplitRatio: .55, timelineVisible: false, timelineHeight: 180 }); });
 const asepriteLimitFixture = new Uint8Array(100 * 1024 * 1024);
 measure("100 MB boundary Aseprite parse fixture", () => {
   try { importAseprite(asepriteLimitFixture); }

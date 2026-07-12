@@ -1,4 +1,4 @@
-import type { SuwolDesktopApi } from "@suwol/shared";
+import type { SuwolDesktopApi, WorkspaceLayout } from "@suwol/shared";
 
 declare global {
   const __SUWOL_E2E__: boolean;
@@ -14,6 +14,7 @@ declare global {
         panY: number;
         zoom: number;
       }> | null;
+      getWorkspaceLayout(): WorkspaceLayout;
       getAnimationState(): Readonly<{
         frameCount: number;
         activeFrameIndex: number;

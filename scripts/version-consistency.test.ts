@@ -22,7 +22,7 @@ describe("application release version consistency", () => {
     expect(desktop.dependencies?.["@suwol/plugin-host"]).toBe(`workspace:${root.version}`);
     expect(about).toContain(`diagnostics?.version ?? "${root.version}"`);
     expect(app.split(`desktopInfo?.version ?? "${root.version}"`)).toHaveLength(3);
-    expect(readFileSync("README.md", "utf8")).toContain(`v${root.version} / M6`);
+    expect(readFileSync("README.md", "utf8")).toContain(`v${root.version} / RC9`);
     expect(() => validateReleaseTag(`v${root.version}`, root.version)).not.toThrow();
     expect(expectedReleaseAssets(root.version, "all")).toEqual([
       `SuwolPixelStudio-${root.version}-linux-x64.AppImage`,
