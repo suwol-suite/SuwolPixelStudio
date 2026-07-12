@@ -23,7 +23,8 @@ const PRODUCTION_CSP = [
 
 const DEVELOPMENT_CSP = [
   "default-src 'self'",
-  "script-src 'self'",
+  // Vite's React Refresh plugin injects its development preamble inline.
+  "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self'",
