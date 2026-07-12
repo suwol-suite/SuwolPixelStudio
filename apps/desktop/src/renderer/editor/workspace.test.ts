@@ -69,4 +69,20 @@ describe("WorkspaceStore document identity", () => {
       documentHeight: 12,
     });
   });
+  it("starts basic drawing tools with an explicit one-pixel brush", () => {
+    const workspace = new WorkspaceStore(),
+      entry = workspace.add(EditorSession.create({
+        name: "Drawing",
+        layerName: "Layer",
+        width: 32,
+        height: 32,
+      }));
+    expect(entry.view).toMatchObject({
+      activeTool: "pencil",
+      brushSize: 1,
+      brushOpacity: 1,
+      foreground: [0, 0, 0, 255],
+      background: [255, 255, 255, 255],
+    });
+  });
 });

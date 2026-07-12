@@ -54,6 +54,9 @@ interface PixelCanvasProps {
   readonly t: Translate;
   readonly pluginOverlays?: readonly OverlayUpdate[];
   readonly brushPreset?: BrushPresetSetting | undefined;
+  readonly brushSize?: number;
+  readonly brushOpacity?: number;
+  readonly onForegroundUsed?: (color: Rgba) => void;
   readonly pluginTool?: Readonly<{ pluginId: string; toolId: string }> | null;
   readonly onPluginToolEvent?: (
     pluginId: string,
@@ -84,11 +87,12 @@ interface PluginStrokeState {
 }
 const PLUGIN_TOOL_BATCH_MAX = Math.min(128, PLUGIN_LIMITS.toolPixelsPerStroke);
 
-export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], brushPreset, pluginTool = null, onPluginToolEvent }: PixelCanvasProps) {
+export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], brushPreset, brushSize = 1, brushOpacity = 1, onForegroundUsed, pluginTool = null, onPluginToolEvent }: PixelCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null),
     overlayRef = useRef<HTMLCanvasElement>(null),
     rendererRef = useRef<PixelRenderer | null>(null),
     strokeRef = useRef<StrokeTransaction | null>(null),
+    strokeUsesForegroundRef = useRef(false),
     hoverRef = useRef<IntPoint | null>(null),
     panRef = useRef<IntPoint | null>(null),
     dragRef = useRef<DragState | null>(null),
@@ -101,6 +105,25 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     spaceRef = useRef(false),
     [spacePressed, setSpacePressed] = useState(false),
     [panning, setPanning] = useState(false);
+
+  function activeBrush(): BrushPreset {
+    if (brushPreset !== undefined)
+      return { ...brushPreset, opacity: brushOpacity };
+    const size = Math.min(64, Math.max(1, Math.round(brushSize)));
+    return {
+      id: "builtin-square",
+      name: `${size} px Square`,
+      kind: "square",
+      width: size,
+      height: size,
+      opacity: brushOpacity,
+      spacing: 1,
+      angle: 0,
+      flipX: false,
+      flipY: false,
+      center: { x: Math.floor(size / 2), y: Math.floor(size / 2) },
+    };
+  }
 
   function queuePluginEvent(state: PluginStrokeState, input: unknown): void {
     state.queue = state.queue.then(async () => {
@@ -193,6 +216,11 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
         previewColor: entry.view.foreground,
         floating: previewFloatingRef.current ?? entry.view.floating,
         symmetry: entry.view.symmetry,
+        brushHoverPoints:
+          hoverRef.current !== null &&
+          (entry.view.activeTool === "pencil" || entry.view.activeTool === "eraser")
+            ? stampBrush(activeBrush(), hoverRef.current)
+            : [],
       },
     );
     drawDeclarativeOverlays(overlay, entry.view.viewport, pluginOverlays.flatMap((update) => update.primitives));
@@ -252,9 +280,9 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
         if (cell?.tileId !== null && cell?.tileId !== undefined) entry.view.selectedTileId = cell.tileId;
         workspace.touch();
       } else if (entry.view.activeTool === "tileFill") {
-        if (fillTile(entry.session, entry.view.activeLayerId, tile.x, tile.y, { tileId: entry.view.selectedTileId, flipX: false, flipY: false, rotation: 0 })) workspace.invalidateCanvas(entry.id);
+        if (fillTile(entry.session, entry.view.activeLayerId, tile.x, tile.y, { tileId: entry.view.selectedTileId, ...entry.view.tileTransform })) workspace.invalidateCanvas(entry.id);
       } else if (entry.view.activeTool === "tilePencil" || entry.view.activeTool === "tileEraser") {
-        paintTile(entry.session, entry.view.activeLayerId, tile.x, tile.y, { tileId: entry.view.activeTool === "tileEraser" ? null : entry.view.selectedTileId, flipX: false, flipY: false, rotation: 0 });
+        paintTile(entry.session, entry.view.activeLayerId, tile.x, tile.y, { tileId: entry.view.activeTool === "tileEraser" ? null : entry.view.selectedTileId, ...entry.view.tileTransform });
         workspace.invalidateCanvas(entry.id);
       } else if (entry.view.activeTool === "tileSelection") {
         const layer = entry.session.model.layers[entry.view.activeLayerId];
@@ -308,13 +336,15 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     end: IntPoint,
     shiftKey = false,
   ): readonly IntPoint[] {
+    const expand = (points: readonly IntPoint[]) =>
+      points.flatMap((point) => stampBrush(activeBrush(), point));
     if (entry.view.activeTool === "line")
-      return rasterizeLine(start, end, shiftKey);
+      return expand(rasterizeLine(start, end, shiftKey));
     const rect = inclusiveRect(start, end, shiftKey);
     if (entry.view.activeTool === "rectangle")
-      return rasterizeRectangle(rect, entry.view.rectangleMode);
+      return expand(rasterizeRectangle(rect, entry.view.rectangleMode));
     if (entry.view.activeTool === "ellipse")
-      return rasterizeEllipse(rect, entry.view.ellipseMode);
+      return expand(rasterizeEllipse(rect, entry.view.ellipseMode));
     return [];
   }
   function commitFloating(): boolean {
@@ -689,6 +719,7 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
               )
             ) {
               workspace.invalidateCanvas(entry.id);
+              if (event.button !== 2) onForegroundUsed?.(entry.view.foreground);
               refresh(message.data.result.rect);
             }
           };
@@ -715,6 +746,7 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
           );
           if (dirty !== null) {
             workspace.invalidateCanvas(entry.id);
+            if (event.button !== 2) onForegroundUsed?.(entry.view.foreground);
             refresh(dirty);
           }
         }
@@ -778,17 +810,20 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
       renderOverlay();
       return;
     }
-    const color: Rgba =
+    const baseColor: Rgba =
       entry.view.activeTool === "eraser"
         ? [0, 0, 0, 0]
         : event.button === 2
           ? entry.view.background
           : entry.view.foreground;
+    const color: Rgba = [
+      baseColor[0],
+      baseColor[1],
+      baseColor[2],
+      Math.round(baseColor[3] * Math.min(1, Math.max(0, brushOpacity))),
+    ];
     try {
-      const normalizedPreset: BrushPreset | undefined = brushPreset === undefined ? undefined : {
-        ...brushPreset,
-        ...(brushPreset.mask === undefined ? {} : { mask: brushPreset.mask }),
-      };
+      const normalizedPreset = activeBrush();
       const stroke = entry.session.beginStroke(
         entry.view.activeLayerId,
         color,
@@ -798,12 +833,12 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
         {
           pixelPerfect: entry.view.pixelPerfect,
           symmetry: entry.view.symmetry,
-          ...(normalizedPreset === undefined
-            ? {}
-            : { stampOffsets: stampBrush(normalizedPreset, { x: 0, y: 0 }) }),
+          stampOffsets: stampBrush(normalizedPreset, { x: 0, y: 0 }),
         },
       );
       strokeRef.current = stroke;
+      strokeUsesForegroundRef.current =
+        entry.view.activeTool === "pencil" && event.button !== 2;
       refresh(stroke.addPoint(point));
     } catch {
       return;
@@ -887,9 +922,12 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     if (strokeRef.current !== null) {
       const stroke = strokeRef.current;
       strokeRef.current = null;
-      if (entry.session.commitStroke(stroke))
+      if (entry.session.commitStroke(stroke)) {
         workspace.invalidateCanvas(entry.id);
-      else workspace.touch();
+        if (strokeUsesForegroundRef.current)
+          onForegroundUsed?.(entry.view.foreground);
+      } else workspace.touch();
+      strokeUsesForegroundRef.current = false;
       refresh();
     }
     const drag = dragRef.current;
@@ -904,12 +942,18 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
               entry.session,
               entry.view.activeLayerId,
               points,
-              entry.view.foreground,
+              [
+                entry.view.foreground[0],
+                entry.view.foreground[1],
+                entry.view.foreground[2],
+                Math.round(entry.view.foreground[3] * entry.view.brushOpacity),
+              ],
               activeSelection(),
               t(`tool.${entry.view.activeTool}`),
             )
           ) {
             workspace.invalidateCanvas(entry.id);
+            onForegroundUsed?.(entry.view.foreground);
             refresh();
           }
         } catch {

@@ -126,4 +126,11 @@ describe("settings validation", () => {
     expect(settings.recentColors).toEqual([]);
     expect(settings.brushPresets).toEqual([]);
   });
+  it("persists dismissal of the first-document editing hint", () => {
+    expect(DEFAULT_SETTINGS.editingHintDismissed).toBe(false);
+    expect(
+      normalizeSettings({ version: 4, editingHintDismissed: true })
+        .editingHintDismissed,
+    ).toBe(true);
+  });
 });

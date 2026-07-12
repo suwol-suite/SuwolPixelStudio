@@ -32,6 +32,8 @@ import {
   type WorkspaceLayout,
 } from "@suwol/shared";
 import type { Translate } from "../i18n";
+import { toolOptionIds } from "../editor/tool-options";
+import { moveDocumentPaletteColor } from "../editor/palette-order";
 import {
   parseHexColor,
   rgbaToHex,
@@ -51,7 +53,9 @@ interface Props {
   readonly workspace: WorkspaceStore;
   readonly status: CanvasStatusStore;
   readonly t: Translate;
-  readonly onForeground: (color: Rgba) => void;
+  readonly onForeground: (color: Rgba, recordRecent?: boolean) => void;
+  readonly onForegroundUsed: (color: Rgba) => void;
+  readonly onDismissEditingHint: () => void;
   readonly onLanguage: (language: LanguageMode) => void;
   readonly onResize: (
     dimension: "right" | "timeline",
@@ -299,207 +303,123 @@ function PalettePanel({
   readonly workspace: WorkspaceStore;
   readonly commands: CommandRegistry;
   readonly t: Translate;
-  readonly onForeground: (color: Rgba) => void;
+  readonly onForeground: (color: Rgba, recordRecent?: boolean) => void;
 }) {
   const entry = workspace.active;
   if (entry === null)
     return <p className="panel-empty">{t("status.noDocument")}</p>;
   const fg = entry.view.foreground,
-    colors = entry.session.model.palette.colors;
-  function set(color: Rgba) {
-    onForeground(color);
-  }
+    bg = entry.view.background,
+    colors = entry.session.model.palette.colors,
+    indexed = entry.session.model.canvas.colorMode === "indexed",
+    selected = colors.find((color) => color.id === entry.view.selectedPaletteColorId) ?? null,
+    set = (color: Rgba, recordRecent = false) => onForeground(color, recordRecent),
+    same = (left: Rgba, right: Rgba) => left.every((value, index) => value === right[index]),
+    setBackground = (color: Rgba) => { entry.view.background = color; workspace.touch(); },
+    moveColor = (draggedId: string, targetIndex: number): void => {
+      const order = colors.map((color) => color.id),
+        source = order.indexOf(draggedId);
+      if (source < 0 || source === targetIndex) return;
+      order.splice(source, 1);
+      order.splice(targetIndex, 0, draggedId);
+      moveDocumentPaletteColor(entry.session, draggedId, targetIndex);
+      workspace.invalidateCanvas(entry.id);
+    };
   return (
     <div className="color-panel">
-      <div className="color-swatches">
-        <Tooltip metadata={{ name: t("color.foreground"), description: t("color.foreground") }}>
-          {(descriptionId) => <button aria-label={t("color.foreground")} aria-describedby={descriptionId} style={{ background: colorCss(fg) }} />}
+      <div className="palette-current-colors">
+        <div className="color-swatches" aria-label={`${t("color.foreground")}, ${t("color.background")}`}>
+        <Tooltip metadata={{ name: t("color.foreground"), description: t("color.foregroundDescription") }}>
+          {(descriptionId) => <label className="foreground" aria-describedby={descriptionId} style={{ backgroundColor: colorCss(fg) }}><input type="color" aria-label={`${t("color.foreground")}: ${rgbaToHex(fg)}`} value={rgbaToHex(fg).slice(0, 7)} onChange={(event) => { const color = parseHexColor(event.target.value, fg[3]); if (color !== null) set(color, true); }} /></label>}
         </Tooltip>
-        <Tooltip metadata={{ name: t("color.background"), description: t("color.background") }}>
-          {(descriptionId) => <button aria-label={t("color.background")} aria-describedby={descriptionId} style={{ background: colorCss(entry.view.background) }} />}
+        <Tooltip metadata={{ name: t("color.background"), description: t("color.backgroundDescription") }}>
+          {(descriptionId) => <label className="background" aria-describedby={descriptionId} style={{ backgroundColor: colorCss(bg) }}><input type="color" aria-label={`${t("color.background")}: ${rgbaToHex(bg)}`} value={rgbaToHex(bg).slice(0, 7)} onChange={(event) => { const color = parseHexColor(event.target.value, bg[3]); if (color !== null) setBackground(color); }} /></label>}
         </Tooltip>
+        </div>
+        <div><strong>{t("color.foreground")}</strong><span>{rgbaToHex(fg)}</span><small>{t("color.background")}: {rgbaToHex(bg)}</small></div>
+        <IconButton label={t("color.swap")} icon="swap" testId="palette-swap-colors" onClick={() => { set(bg); setBackground(fg); }} />
       </div>
-      <label>
+      <label className="palette-hex">
         {t("color.hex")}
         <input
+          data-testid="palette-hex"
           value={rgbaToHex(fg)}
           onChange={(event) => {
             const color = parseHexColor(event.target.value, fg[3]);
             if (color !== null) set(color);
           }}
+          onBlur={() => set(entry.view.foreground, true)}
+          onKeyDown={(event) => { if (event.key === "Enter") { set(entry.view.foreground, true); event.currentTarget.blur(); } }}
         />
       </label>
-      <div className="rgba-fields">
-        {(["R", "G", "B", "A"] as const).map((label, index) => (
-          <label key={label}>
-            {label}
-            <input
-              type="number"
-              min="0"
-              max="255"
-              value={fg[index]}
-              onChange={(event) =>
-                set(
-                  fg.map((item, i) =>
-                    i === index
-                      ? Math.min(255, Math.max(0, Number(event.target.value)))
-                      : item,
-                  ) as unknown as Rgba,
-                )
-              }
-            />
-          </label>
-        ))}
-      </div>
-      <div className="color-actions">
-        <IconButton
-          label={t("color.swap")}
-          icon="swap"
-          onClick={() => {
-            const background = entry.view.background;
-            entry.view.background = entry.view.foreground;
-            set(background);
-          }}
-        />
-        <button type="button" onClick={() => set([0, 0, 0, 255])}>
-          {t("color.reset")}
-        </button>
-      </div>
+      <label className="palette-alpha">A<input type="number" min="0" max="255" value={fg[3]} aria-label="A" onChange={(event) => set([fg[0], fg[1], fg[2], Math.min(255, Math.max(0, Number(event.target.value)))])} onBlur={() => set(entry.view.foreground, true)} /></label>
       <h3>{t("palette.recent")}</h3>
-      <div className="recent-colors">
+      <div className="recent-colors" data-testid="recent-colors">
         {settings.recentColors.map((color) => (
-          <Tooltip key={color.join("-")} metadata={{ name: rgbaToHex(color), description: t("palette.recent") }}>
-            {(descriptionId) => <button aria-label={rgbaToHex(color)} aria-describedby={descriptionId} style={{ background: colorCss(color) }} onClick={() => set(color)} />}
+          <Tooltip key={color.join("-")} metadata={{ name: rgbaToHex(color), description: t("palette.setForeground") }}>
+            {(descriptionId) => <button aria-label={`${t("palette.setForeground")}: ${rgbaToHex(color)}`} aria-describedby={descriptionId} style={{ backgroundColor: colorCss(color) }} onClick={() => set(color)} onContextMenu={(event) => { event.preventDefault(); setBackground(color); }} />}
           </Tooltip>
         ))}
       </div>
-      <div className="palette-actions">
-        <button
-          data-testid="palette-add"
-          type="button"
-          onClick={() => {
-            void commands.execute("palette.addCurrent");
-          }}
-        >
-          {t("palette.add")}
-        </button>
-        <IconButton
-          label={t("palette.delete")}
-          icon="delete"
-          disabled={entry.view.selectedPaletteColorId === null}
-          disabledReason={t("tooltip.disabled.paletteSelection")}
-          onClick={() => {
-            void commands.execute("palette.delete");
-          }}
-        />
-        <IconButton
-          label={t("palette.up")}
-          icon="up"
-          disabled={entry.view.selectedPaletteColorId === null}
-          disabledReason={t("tooltip.disabled.paletteSelection")}
-          onClick={() => {
-            void commands.execute("palette.moveUp");
-          }}
-        />
-        <IconButton
-          label={t("palette.down")}
-          icon="down"
-          disabled={entry.view.selectedPaletteColorId === null}
-          disabledReason={t("tooltip.disabled.paletteSelection")}
-          onClick={() => {
-            void commands.execute("palette.moveDown");
-          }}
-        />
+      <div className="document-palette-heading"><h3>{t("palette.document")}</h3><span>{colors.length}</span></div>
+      <div className="palette-actions" role="toolbar" aria-label={t("palette.document")}>
+        <IconButton label={t("palette.addCurrent")} description={t("palette.addCurrent")} icon="add" testId="palette-add" onClick={() => { void commands.execute("palette.addCurrent"); }} />
+        <IconButton label={t("palette.create")} icon="palette" onClick={() => { entry.view.selectedPaletteColorId = entry.session.addPaletteColor([255, 255, 255, 255]); workspace.touch(); }} />
+        <IconButton label={t("palette.delete")} icon="delete" disabled={selected === null} disabledReason={t("tooltip.disabled.paletteSelection")} onClick={() => { void commands.execute("palette.delete"); }} />
+        <IconButton label={t("command.palette.sortHue")} icon="down" onClick={() => { void commands.execute("palette.sortHue"); }} />
+        <IconButton label={t("command.palette.import")} icon="document" onClick={() => { void commands.execute("palette.import"); }} />
+        <IconButton label={t("command.palette.export")} icon="up" onClick={() => { void commands.execute("palette.export"); }} />
+        <details className="palette-more"><summary aria-label={t("palette.more")}>…</summary><div><button type="button" onClick={() => { void commands.execute("palette.moveUp"); }}>{t("palette.up")}</button><button type="button" onClick={() => { void commands.execute("palette.moveDown"); }}>{t("palette.down")}</button><button type="button" onClick={() => { entry.session.loadDefaultPalette([[0,0,0,255],[255,255,255,255],[196,40,40,255],[238,156,42,255],[246,232,92,255],[46,160,67,255],[54,104,218,255],[132,61,184,255]]); workspace.touch(); }}>{t("palette.loadDefault")}</button></div></details>
       </div>
-      <button
-        type="button"
-        onClick={() => {
-          entry.session.loadDefaultPalette([
-            [0, 0, 0, 255],
-            [255, 255, 255, 255],
-            [196, 40, 40, 255],
-            [238, 156, 42, 255],
-            [246, 232, 92, 255],
-            [46, 160, 67, 255],
-            [54, 104, 218, 255],
-            [132, 61, 184, 255],
-          ]);
-          workspace.touch();
-        }}
-      >
-        {t("palette.loadDefault")}
-      </button>
       {colors.length === 0 ? (
         <p className="panel-empty">{t("palette.empty")}</p>
       ) : (
         <div
           className="document-palette"
           role="listbox"
-          aria-label={t("panel.palette")}
+          aria-label={t("palette.document")}
+          data-testid="document-palette"
         >
-          {colors.map((color) => {
+          {colors.map((color, index) => {
             const duplicate = colors.some(
               (other) =>
                 other.id !== color.id &&
                 other.rgba.join(",") === color.rgba.join(","),
             );
             return (
-              <div
-                className={`palette-color ${entry.view.selectedPaletteColorId === color.id ? "active" : ""}`}
-                key={color.id}
-              >
-                <Tooltip metadata={{ name: `${t("palette.slot")} ${color.index}`, description: duplicate ? t("palette.duplicate") : rgbaToHex(color.rgba) }}>
+              <Tooltip key={color.id} metadata={{ name: indexed ? `${t("palette.slot")} ${color.index}` : (color.name ?? rgbaToHex(color.rgba)), description: `${color.name ?? rgbaToHex(color.rgba)} · ${rgbaToHex(color.rgba)}${duplicate ? ` · ${t("palette.duplicate")}` : ""}` }}>
                   {(descriptionId) => <button
-                    className="palette-swatch"
+                    className={`palette-swatch ${entry.view.selectedPaletteColorId === color.id ? "active" : ""} ${same(fg, color.rgba) ? "is-foreground" : ""} ${same(bg, color.rgba) ? "is-background" : ""}`}
                     role="option"
                     aria-selected={entry.view.selectedPaletteColorId === color.id}
-                    aria-label={`${t("palette.slot")} ${color.index}, ${color.name ?? rgbaToHex(color.rgba)}, ${rgbaToHex(color.rgba)}${color.index === entry.session.model.palette.transparentIndex ? `, ${t("indexed.transparentIndex")}` : ""}`}
+                    aria-label={`${indexed ? `${t("palette.slot")} ${color.index}, ` : ""}${color.name ?? rgbaToHex(color.rgba)}, ${rgbaToHex(color.rgba)}${color.index === entry.session.model.palette.transparentIndex ? `, ${t("indexed.transparentIndex")}` : ""}${color.locked === true ? `, ${t("layer.lock")}` : ""}`}
                     aria-describedby={descriptionId}
-                    style={{ background: colorCss(color.rgba) }}
+                    style={{
+                      backgroundColor: colorCss(color.rgba),
+                      ...(color.rgba[3] === 255 ? { backgroundImage: "none" } : {}),
+                    }}
+                    draggable
+                    onDragStart={(event) => event.dataTransfer.setData("text/palette-color-id", color.id)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => { event.preventDefault(); moveColor(event.dataTransfer.getData("text/palette-color-id"), index); }}
                     onClick={() => {
                       entry.view.selectedPaletteColorId = color.id;
                       entry.view.foregroundIndex = color.index;
                       set(color.rgba);
                     }}
+                    onDoubleClick={() => { entry.view.selectedPaletteColorId = color.id; workspace.touch(); requestAnimationFrame(() => document.querySelector<HTMLInputElement>("[data-testid='palette-editor-color']")?.focus()); }}
                     onContextMenu={(event) => {
                       event.preventDefault();
-                      entry.view.background = color.rgba;
-                      workspace.touch();
+                      setBackground(color.rgba);
                     }}
-                  />}
+                    onKeyDown={(event) => { if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return; event.preventDefault(); const columns = Math.max(1, Math.floor((event.currentTarget.parentElement?.clientWidth ?? 1) / 30)), offset = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : event.key === "ArrowUp" ? -columns : columns; const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".palette-swatch"); buttons?.[Math.min(colors.length - 1, Math.max(0, index + offset))]?.focus(); }}
+                  >{indexed && <span className="palette-index">{color.index}</span>}{color.index === entry.session.model.palette.transparentIndex && <span className="palette-transparent" aria-hidden="true">◇</span>}{color.locked === true && <span className="palette-lock" aria-hidden="true">●</span>}</button>}
                 </Tooltip>
-                <span className="palette-index" aria-hidden="true">{color.index}</span>
-                <input
-                  type="color"
-                  aria-label={`${t("palette.slot")} ${color.index}`}
-                  value={rgbaToHex(color.rgba).slice(0, 7)}
-                  disabled={color.locked === true}
-                  onChange={(event) => {
-                    const next = parseHexColor(event.target.value, color.rgba[3]);
-                    if (next !== null) { entry.session.setPaletteColor(color.id, next); workspace.invalidateCanvas(entry.id); }
-                  }}
-                />
-                <Tooltip metadata={{ name: t("layer.lock"), description: t("layer.lock") }}>
-                  {(descriptionId) => <button type="button" aria-label={t("layer.lock")} aria-describedby={descriptionId} aria-pressed={color.locked === true} onClick={() => { entry.session.setPaletteLocked(color.id, color.locked !== true); workspace.touch(); }}>{color.locked ? "🔒" : "🔓"}</button>}
-                </Tooltip>
-                {entry.session.model.canvas.colorMode === "indexed" && <input type="radio" name="transparent-index" aria-label={`${t("indexed.transparentIndex")} ${color.index}`} checked={color.index === entry.session.model.palette.transparentIndex} onChange={() => { entry.session.setTransparentIndex(color.index); workspace.invalidateCanvas(entry.id); }} />}
-                <input
-                  aria-label={t("palette.name")}
-                  value={color.name ?? ""}
-                  placeholder={rgbaToHex(color.rgba)}
-                  onChange={(event) => {
-                    entry.session.renamePaletteColor(
-                      color.id,
-                      event.target.value,
-                    );
-                    workspace.touch();
-                  }}
-                />
-              </div>
             );
           })}
         </div>
       )}
+      {selected !== null && <div className="palette-editor" data-testid="palette-editor"><strong>{t("palette.edit")}</strong><label>{t("color.hex")}<input data-testid="palette-editor-color" type="color" value={rgbaToHex(selected.rgba).slice(0, 7)} disabled={selected.locked === true} onChange={(event) => { const next = parseHexColor(event.target.value, selected.rgba[3]); if (next !== null) { entry.session.setPaletteColor(selected.id, next); workspace.invalidateCanvas(entry.id); } }} /></label><label>{t("palette.name")}<input value={selected.name ?? ""} onChange={(event) => { entry.session.renamePaletteColor(selected.id, event.target.value); workspace.touch(); }} /></label><label><input type="checkbox" checked={selected.locked === true} onChange={(event) => { entry.session.setPaletteLocked(selected.id, event.target.checked); workspace.touch(); }} />{t("layer.lock")}</label>{indexed && <label><input type="radio" name="transparent-index-editor" checked={selected.index === entry.session.model.palette.transparentIndex} onChange={() => { entry.session.setTransparentIndex(selected.index); workspace.invalidateCanvas(entry.id); }} />{t("indexed.transparentIndex")}</label>}</div>}
     </div>
   );
 }
@@ -675,7 +595,9 @@ function ToolOptions({
       <h3>{t(`tool.${tool}`)}</h3>
       <p className="mode-badge" aria-label={`${t("new.colorMode")}: ${entry.session.model.canvas.colorMode === "indexed" ? t("colorMode.indexed") : t("colorMode.rgba")}`}>{entry.session.model.canvas.colorMode === "indexed" ? t("colorMode.indexed") : t("colorMode.rgba")}</p>
       {(tool === "pencil" || tool === "eraser") && <>
-        <label>{t("brush.preset")}<select value={view.brushPresetId ?? ""} onChange={(event) => { view.brushPresetId = event.target.value || null; workspace.touch(); }}><option value="">1 px Square</option>{settings.brushPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
+        <label>{t("brush.size")}<input data-testid="properties-brush-size" type="number" min="1" max="64" value={view.brushSize} onChange={(event) => { view.brushSize = Math.min(64, Math.max(1, Math.round(Number(event.target.value)))); view.brushPresetId = null; workspace.touch(); }} /></label>
+        <label>{t("brush.opacity")}<span className="property-range"><input type="range" min="1" max="100" value={Math.round(view.brushOpacity * 100)} onChange={(event) => { view.brushOpacity = Number(event.target.value) / 100; workspace.touch(); }} /><output>{Math.round(view.brushOpacity * 100)}%</output></span></label>
+        <label>{t("brush.preset")}<select value={view.brushPresetId ?? ""} onChange={(event) => { const id = event.target.value || null, preset = settings.brushPresets.find((item) => item.id === id); view.brushPresetId = id; if (preset !== undefined) { view.brushSize = Math.max(preset.width, preset.height); view.brushOpacity = preset.opacity; } workspace.touch(); }}><option value="">{view.brushSize} px Square</option>{settings.brushPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
         <button type="button" onClick={() => { void commands.execute("brush.createFromSelection"); }}>{t("command.brush.createFromSelection")}</button>
         <button type="button" onClick={() => { void commands.execute("brush.managePresets"); }}>{t("command.brush.managePresets")}</button>
         <label><input type="checkbox" checked={view.pixelPerfect} onChange={(event) => { view.pixelPerfect = event.target.checked; workspace.touch(); }} />{t("brush.pixelPerfect")}</label>
@@ -788,12 +710,14 @@ function StatusBar({
   settings,
   commands,
   status,
+  workspace,
   t,
   onLanguage,
 }: {
   readonly settings: AppSettings;
   readonly commands: CommandRegistry;
   readonly status: CanvasStatusStore;
+  readonly workspace: WorkspaceStore;
   readonly t: Translate;
   readonly onLanguage: (language: LanguageMode) => void;
 }) {
@@ -806,6 +730,7 @@ function StatusBar({
       <div className="status-message">
         <span className="status-dot" />
         {t("status.ready")}
+        {workspace.active !== null && <><span className="status-separator" /><span data-testid="status-current-tool">{t("toolOptions.currentTool")}: {t(`tool.${workspace.active.view.activeTool}`)} · {workspace.active.view.brushSize} px</span></>}
         <span className="status-hint">{t("status.panHint")}</span>
         <span className="status-separator" />
         <span>{canvas.x === null ? "—" : `${canvas.x}, ${canvas.y}`}</span>
@@ -889,6 +814,74 @@ function StatusBar({
   );
 }
 
+function ToolOptionsBar({
+  settings,
+  workspace,
+  t,
+  onForeground,
+}: {
+  readonly settings: AppSettings;
+  readonly workspace: WorkspaceStore;
+  readonly t: Translate;
+  readonly onForeground: (color: Rgba, recordRecent?: boolean) => void;
+}) {
+  const entry = workspace.active;
+  if (entry === null) return null;
+  const view = entry.view,
+    tool = view.activeTool,
+    brushTool = tool === "pencil" || tool === "eraser" || tool === "line" || tool === "rectangle" || tool === "ellipse",
+    setSize = (value: number): void => {
+      view.brushSize = Math.min(64, Math.max(1, Math.round(value)));
+      view.brushPresetId = null;
+      workspace.touch();
+    },
+    setBackground = (color: Rgba): void => {
+      view.background = color;
+      workspace.touch();
+    },
+    shapeMode = tool === "rectangle" ? view.rectangleMode : view.ellipseMode;
+  return (
+    <div className="tool-options-bar" role="toolbar" aria-label={t("toolOptions.currentTool")} data-testid="tool-options-bar" data-options={toolOptionIds(tool).join(" ")}>
+      <div className="current-tool-indicator" data-testid="current-tool">
+        <Icon name={toolIcons[tool]} />
+        <span>{t(`tool.${tool}`)}</span>
+      </div>
+      <div className="toolbar-color-stack" aria-label={`${t("color.foreground")}, ${t("color.background")}`}>
+        <Tooltip metadata={{ name: t("color.foreground"), description: t("color.foregroundDescription") }}>
+          {(descriptionId) => <label className="toolbar-color foreground" aria-describedby={descriptionId} style={{ background: colorCss(view.foreground) }}>
+            <span className="sr-live">{t("color.foreground")}: {rgbaToHex(view.foreground)}</span>
+            <input data-testid="foreground-color" type="color" aria-label={t("color.foreground")} value={rgbaToHex(view.foreground).slice(0, 7)} onChange={(event) => { const color = parseHexColor(event.target.value, view.foreground[3]); if (color !== null) onForeground(color, true); }} />
+          </label>}
+        </Tooltip>
+        <Tooltip metadata={{ name: t("color.background"), description: t("color.backgroundDescription") }}>
+          {(descriptionId) => <label className="toolbar-color background" aria-describedby={descriptionId} style={{ background: colorCss(view.background) }}>
+            <span className="sr-live">{t("color.background")}: {rgbaToHex(view.background)}</span>
+            <input data-testid="background-color" type="color" aria-label={t("color.background")} value={rgbaToHex(view.background).slice(0, 7)} onChange={(event) => { const color = parseHexColor(event.target.value, view.background[3]); if (color !== null) setBackground(color); }} />
+          </label>}
+        </Tooltip>
+      </div>
+      <IconButton label={t("color.swap")} icon="swap" testId="swap-colors" onClick={() => { const foreground = view.foreground; onForeground(view.background); setBackground(foreground); }} />
+      {brushTool && <>
+        <span className="toolbar-label">{tool === "line" || tool === "rectangle" || tool === "ellipse" ? t("toolOptions.thickness") : t("brush.size")}</span>
+        <Tooltip metadata={{ name: t("brush.decrease"), description: t("brush.decrease"), shortcut: "[" }}>
+          {(descriptionId) => <button type="button" className="toolbar-step" aria-label={t("brush.decrease")} aria-describedby={descriptionId} onClick={() => setSize(view.brushSize - 1)}>−</button>}
+        </Tooltip>
+        <label className="toolbar-number"><input data-testid="brush-size" type="number" min="1" max="64" value={view.brushSize} aria-label={t("brush.size")} onChange={(event) => setSize(Number(event.target.value))} /><span>px</span></label>
+        <Tooltip metadata={{ name: t("brush.increase"), description: t("brush.increase"), shortcut: "]" }}>
+          {(descriptionId) => <button type="button" className="toolbar-step" aria-label={t("brush.increase")} aria-describedby={descriptionId} onClick={() => setSize(view.brushSize + 1)}>+</button>}
+        </Tooltip>
+        <label className="toolbar-opacity"><span>{t("brush.opacity")}</span><input data-testid="brush-opacity" type="number" min="1" max="100" step="5" value={Math.round(view.brushOpacity * 100)} aria-label={t("brush.opacity")} onChange={(event) => { view.brushOpacity = Math.min(1, Math.max(.01, Number(event.target.value) / 100)); workspace.touch(); }} /><span>%</span></label>
+      </>}
+      {tool === "fill" && <><span className="toolbar-label">{t("toolOptions.tolerance")}</span><output>0</output><span className="toolbar-muted">{t("toolOptions.selectionLimited")}: {view.selection.bounds === null ? t("symmetry.off") : t("symmetry.on")}</span></>}
+      {(tool === "rectangle" || tool === "ellipse") && <label className="toolbar-select"><span>{t("toolOptions.fillMode")}</span><select value={shapeMode} onChange={(event) => { if (tool === "rectangle") view.rectangleMode = event.target.value as ShapeFillMode; else view.ellipseMode = event.target.value as ShapeFillMode; workspace.touch(); }}><option value="outline">{t("toolOptions.outline")}</option><option value="filled">{t("toolOptions.filled")}</option></select></label>}
+      {tool === "selectionRect" && <label className="toolbar-select"><span>{t("toolOptions.selectionMode")}</span><select value={view.selectionOperation} onChange={(event) => { view.selectionOperation = event.target.value as SelectionOperation; workspace.touch(); }}>{(["replace", "add", "subtract", "intersect"] as const).map((operation) => <option key={operation} value={operation}>{t(`selection.${operation}`)}</option>)}</select></label>}
+      {tool === "move" && <span className="toolbar-muted">{view.selection.bounds === null ? t("toolOptions.moveLayer") : t("toolOptions.moveSelection")}</span>}
+      {tool.startsWith("tile") && <><label className="toolbar-number"><span>{t("tilemap.selectedTile")}</span><input type="number" min="0" value={view.selectedTileId} onChange={(event) => { view.selectedTileId = Math.max(0, Math.round(Number(event.target.value))); workspace.touch(); }} /></label><label className="toolbar-select"><span>{t("toolOptions.tileRotation")}</span><select value={view.tileTransform.rotation} onChange={(event) => { view.tileTransform = { ...view.tileTransform, rotation: Number(event.target.value) as 0 | 1 | 2 | 3 }; workspace.touch(); }}>{[0, 1, 2, 3].map((rotation) => <option value={rotation} key={rotation}>{rotation * 90}°</option>)}</select></label><label className="toolbar-check"><input type="checkbox" checked={view.tileTransform.flipX} onChange={(event) => { view.tileTransform = { ...view.tileTransform, flipX: event.target.checked }; workspace.touch(); }} />{t("toolOptions.flipHorizontal")}</label><label className="toolbar-check"><input type="checkbox" checked={view.tileTransform.flipY} onChange={(event) => { view.tileTransform = { ...view.tileTransform, flipY: event.target.checked }; workspace.touch(); }} />{t("toolOptions.flipVertical")}</label></>}
+      {brushTool && <details className="tool-options-overflow"><summary aria-label={t("toolOptions.more")}>…</summary><div><label>{t("brush.preset")}<select value={view.brushPresetId ?? ""} onChange={(event) => { const id = event.target.value || null, preset = settings.brushPresets.find((item) => item.id === id); view.brushPresetId = id; if (preset !== undefined) { view.brushSize = Math.max(preset.width, preset.height); view.brushOpacity = preset.opacity; } workspace.touch(); }}><option value="">{view.brushSize} px Square</option>{settings.brushPresets.map((preset) => <option value={preset.id} key={preset.id}>{preset.name}</option>)}</select></label><label><input type="checkbox" checked={view.pixelPerfect} onChange={(event) => { view.pixelPerfect = event.target.checked; workspace.touch(); }} />{t("brush.pixelPerfect")}</label><label>{t("symmetry.mode")}<select value={view.symmetry.mode} onChange={(event) => { view.symmetry = { ...view.symmetry, mode: event.target.value as typeof view.symmetry.mode }; workspace.touch(); }}><option value="off">{t("symmetry.off")}</option><option value="horizontal">{t("symmetry.horizontal")}</option><option value="vertical">{t("symmetry.vertical")}</option><option value="both">{t("symmetry.both")}</option></select></label></div></details>}
+    </div>
+  );
+}
+
 const tools: readonly ToolId[] = [
     "pencil",
     "eraser",
@@ -934,6 +927,8 @@ export function EditorShell({
   status,
   t,
   onForeground,
+  onForegroundUsed,
+  onDismissEditingHint,
   onLanguage,
   onResize,
   onLayoutChange,
@@ -1016,6 +1011,14 @@ export function EditorShell({
             ))}
         </div>
       </header>
+      {active !== null && (
+        <ToolOptionsBar
+          settings={settings}
+          workspace={workspace}
+          t={t}
+          onForeground={onForeground}
+        />
+      )}
       <main className="workspace-main">
         {layout.toolsVisible && (
             <aside
@@ -1084,6 +1087,7 @@ export function EditorShell({
           </section>
         ) : (
           <section className="canvas-workspace editor-active">
+            {!settings.editingHintDismissed && <div className="editing-hint" role="status" data-testid="editing-hint"><span>{t("hint.firstDocument")}</span><IconButton label={t("hint.dismiss")} icon="close" onClick={onDismissEditingHint} /></div>}
             <PixelCanvas
               key={active.id}
               entry={active}
@@ -1096,6 +1100,9 @@ export function EditorShell({
                 ? {}
                 : { onPluginToolEvent })}
               brushPreset={settings.brushPresets.find((preset) => preset.id === active.view.brushPresetId)}
+              brushSize={active.view.brushSize}
+              brushOpacity={active.view.brushOpacity}
+              onForegroundUsed={onForegroundUsed}
             />
           </section>
         )}
@@ -1120,7 +1127,7 @@ export function EditorShell({
             >
               <div
                 className="right-dock-groups"
-                style={{ gridTemplateRows: layout.upperGroup !== null && layout.lowerGroup !== null ? `${layout.rightSplitRatio}fr auto ${1 - layout.rightSplitRatio}fr` : "minmax(0, 1fr)" }}
+                style={{ gridTemplateRows: layout.upperGroup !== null && layout.lowerGroup !== null ? `minmax(0, ${layout.rightSplitRatio}fr) auto minmax(0, ${1 - layout.rightSplitRatio}fr)` : "minmax(0, 1fr)" }}
               >
                 {layout.upperGroup !== null && <DockGroup id="upper" group={layout.upperGroup} layout={layout} t={t} onChange={onLayoutChange} onClose={closePanel}>{panelContent(layout.upperGroup.activePanelId ?? layout.upperGroup.panelIds[0] ?? "")}</DockGroup>}
                 {layout.upperGroup !== null && layout.lowerGroup !== null && <DockRatioSplitter value={layout.rightSplitRatio} t={t} onChange={(rightSplitRatio) => onLayoutChange({ ...layout, rightSplitRatio })} />}
@@ -1170,6 +1177,7 @@ export function EditorShell({
         settings={settings}
         commands={commands}
         status={status}
+        workspace={workspace}
         t={t}
         onLanguage={onLanguage}
       />

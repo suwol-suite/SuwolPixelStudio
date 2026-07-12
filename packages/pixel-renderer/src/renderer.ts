@@ -419,6 +419,7 @@ export interface EditorOverlayState {
   readonly previewColor: Rgba;
   readonly floating: FloatingSelection | null;
   readonly symmetry?: Readonly<{ mode: "off" | "horizontal" | "vertical" | "both"; axisX: number; axisY: number }>;
+  readonly brushHoverPoints?: readonly IntPoint[];
 }
 
 export function drawEditorOverlay(
@@ -573,8 +574,19 @@ export function drawEditorOverlay(
     context.stroke();
     context.setLineDash([]);
   }
-  const hover = state.hover;
-  if (hover !== null) {
+  const hover = state.hover,
+    brushHoverPoints = state.brushHoverPoints ?? [];
+  if (brushHoverPoints.length > 0) {
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = Math.max(1, 2 / ratio);
+    for (const point of brushHoverPoints)
+      context.strokeRect(
+        viewport.panX + point.x * viewport.zoom + 0.5,
+        viewport.panY + point.y * viewport.zoom + 0.5,
+        viewport.zoom - 1,
+        viewport.zoom - 1,
+      );
+  } else if (hover !== null) {
     context.strokeStyle = "#ffffff";
     context.lineWidth = Math.max(1, 2 / ratio);
     context.strokeRect(

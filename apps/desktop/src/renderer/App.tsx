@@ -137,6 +137,8 @@ import {
   type ToolId,
   type WorkspaceDocument,
 } from "./editor/workspace";
+import { recordRecentColor } from "./editor/recent-colors";
+import { moveDocumentPaletteColor } from "./editor/palette-order";
 import { createTranslator } from "./i18n";
 import { PluginRuntimeController } from "./plugins/runtime";
 import { AsepriteCompatibilityDialog, BrushPresetManagerDialog, IndexedConversionDialog, KeybindingEditorDialog, LayoutManagerDialog } from "./components/ProfessionalDialogs";
@@ -425,19 +427,17 @@ export function App() {
       target = Math.min(order.length - 1, Math.max(0, index + offset));
     return order[target] ?? entry.view.activeFrameId;
   }
-  function setForeground(color: Rgba): void {
+  function setForeground(color: Rgba, recordRecent = false): void {
     const entry = workspace.active;
     if (entry === null) return;
     entry.view.foreground = color;
-    const recent = [
-      color,
-      ...settingsRef.current.recentColors.filter(
-        (item) => item.join(",") !== color.join(","),
-      ),
-    ].slice(0, 12);
-    setSettings((current) =>
-      normalizeSettings({ ...current, recentColors: recent }),
-    );
+    if (recordRecent)
+      setSettings((current) =>
+        normalizeSettings({
+          ...current,
+          recentColors: recordRecentColor(current.recentColors, color),
+        }),
+      );
     workspace.touch();
   }
 
@@ -1969,8 +1969,8 @@ export function App() {
           const index = entry.session.model.palette.colors.findIndex(
             (color) => color.id === id,
           );
-          entry.session.movePaletteColor(id, index - 1);
-          workspace.touch();
+          moveDocumentPaletteColor(entry.session, id, index - 1);
+          workspace.invalidateCanvas(entry.id);
         },
       },
       {
@@ -1986,8 +1986,8 @@ export function App() {
           const index = entry.session.model.palette.colors.findIndex(
             (color) => color.id === id,
           );
-          entry.session.movePaletteColor(id, index + 1);
-          workspace.touch();
+          moveDocumentPaletteColor(entry.session, id, index + 1);
+          workspace.invalidateCanvas(entry.id);
         },
       },
       {
@@ -2193,6 +2193,37 @@ export function App() {
         },
       },
       {
+        id: "help.quickStart",
+        titleKey: "command.help.quickStart",
+        category: "category.help",
+        canExecute: () => true,
+        execute: () => {
+          void window.suwolDesktop?.shell.openExternal(
+            "https://github.com/suwol-suite/SuwolPixelStudio/blob/main/docs/user-guide/getting-started.md",
+          );
+        },
+      },
+      ...(
+        [
+          ["help.tools", "canvas-and-tools.md"],
+          ["help.colorsPalette", "colors-and-palette.md"],
+          ["help.layers", "layers-and-blending.md"],
+          ["help.animation", "animation.md"],
+          ["help.shortcuts", "shortcuts.md"],
+          ["help.troubleshooting", "troubleshooting.md"],
+        ] as const
+      ).map(([id, document]): CommandDefinition => ({
+        id,
+        titleKey: `command.${id}`,
+        category: "category.help",
+        canExecute: () => true,
+        execute: () => {
+          void window.suwolDesktop?.shell.openExternal(
+            `https://github.com/suwol-suite/SuwolPixelStudio/blob/main/docs/user-guide/${document}`,
+          );
+        },
+      })),
+      {
         id: "help.about",
         titleKey: "command.help.about",
         category: "category.help",
@@ -2330,6 +2361,27 @@ export function App() {
         return;
       const key = event.key.toLocaleLowerCase("en-US"),
         primary = event.ctrlKey || event.metaKey;
+      const brushEntry = workspace.active;
+      if (
+        !primary &&
+        !event.altKey &&
+        !event.shiftKey &&
+        (key === "[" || key === "]") &&
+        brushEntry !== null &&
+        ["pencil", "eraser", "line", "rectangle", "ellipse"].includes(
+          brushEntry.view.activeTool,
+        ) &&
+        !settingsRef.current.workspaceLayout.timelineVisible
+      ) {
+        brushEntry.view.brushSize = Math.min(
+          64,
+          Math.max(1, brushEntry.view.brushSize + (key === "]" ? 1 : -1)),
+        );
+        brushEntry.view.brushPresetId = null;
+        workspace.touch();
+        event.preventDefault();
+        return;
+      }
       const chord = normalizeShortcut([event.ctrlKey ? "Ctrl" : "", event.metaKey ? "Meta" : "", event.altKey ? "Alt" : "", event.shiftKey ? "Shift" : "", event.key === " " ? "Space" : event.key].filter(Boolean).join("+")),
         custom = settingsRef.current.keybindings.entries.find((entry) => (entry.context === "global" || entry.context === "canvas") && entry.shortcuts.includes(chord));
       let id: string | null = custom?.commandId ?? null;
@@ -2534,6 +2586,18 @@ export function App() {
         status={status}
         t={t}
         onForeground={setForeground}
+        onForegroundUsed={(color) => {
+          setForeground(color, true);
+          if (!settingsRef.current.editingHintDismissed)
+            setSettings((current) =>
+              normalizeSettings({ ...current, editingHintDismissed: true }),
+            );
+        }}
+        onDismissEditingHint={() =>
+          setSettings((current) =>
+            normalizeSettings({ ...current, editingHintDismissed: true }),
+          )
+        }
         onLanguage={(value: LanguageMode) =>
           setSettings((current) =>
             normalizeSettings({ ...current, language: value }),

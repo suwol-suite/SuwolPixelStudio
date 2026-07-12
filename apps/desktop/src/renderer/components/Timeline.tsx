@@ -19,7 +19,7 @@ const thumbnails = new CelThumbnailService();
 
 function TimelineControl({ label, description, shortcut, disabled, disabledReason, testId, pressed, onClick, children }: { readonly label: string; readonly description: string; readonly shortcut?: string; readonly disabled?: boolean; readonly disabledReason?: string; readonly testId?: string; readonly pressed?: boolean; readonly onClick: () => void; readonly children: ReactNode }) {
   return <Tooltip metadata={{ name: label, description, ...(shortcut === undefined ? {} : { shortcut }), ...(disabled === true && disabledReason !== undefined ? { disabledReason } : {}) }}>
-    {(descriptionId) => <button type="button" aria-label={label} aria-describedby={descriptionId} aria-pressed={pressed} data-testid={testId} disabled={disabled} onClick={onClick}>{children}</button>}
+    {(descriptionId) => <button type="button" aria-label={label} aria-describedby={descriptionId} aria-pressed={pressed} aria-disabled={disabled === true} data-testid={testId} onClick={() => { if (disabled !== true) onClick(); }}>{children}</button>}
   </Tooltip>;
 }
 

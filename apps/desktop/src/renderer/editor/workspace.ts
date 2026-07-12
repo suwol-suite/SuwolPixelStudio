@@ -52,7 +52,14 @@ export interface DocumentViewState {
   symmetry: Readonly<{ mode: "off" | "horizontal" | "vertical" | "both"; axisX: number; axisY: number }>;
   expandedGroupIds: Set<LayerId>;
   selectedTileId: number;
+  tileTransform: Readonly<{
+    rotation: 0 | 1 | 2 | 3;
+    flipX: boolean;
+    flipY: boolean;
+  }>;
   brushPresetId: string | null;
+  brushSize: number;
+  brushOpacity: number;
   pixelGrid: boolean;
   fitPending: boolean;
   activeFrameId: FrameId;
@@ -187,7 +194,10 @@ export class WorkspaceStore {
         symmetry: { mode: "off", axisX: session.model.canvas.width / 2 - 0.5, axisY: session.model.canvas.height / 2 - 0.5 },
         expandedGroupIds: new Set(),
         selectedTileId: 0,
+        tileTransform: { rotation: 0, flipX: false, flipY: false },
         brushPresetId: null,
+        brushSize: 1,
+        brushOpacity: 1,
         pixelGrid: true,
         fitPending: true,
         activeFrameId: firstFrame,

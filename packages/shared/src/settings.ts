@@ -54,6 +54,7 @@ const persistedSettingsSchema = z.object({
   keybindings: z.unknown().optional(),
   brushPresets: z.unknown().optional(),
   symmetry: z.unknown().optional(),
+  editingHintDismissed: z.unknown().optional(),
 });
 
 export interface AppSettings {
@@ -72,6 +73,7 @@ export interface AppSettings {
   readonly keybindings: KeybindingSettings;
   readonly brushPresets: readonly BrushPresetSetting[];
   readonly symmetry: Readonly<{ mode: "off" | "horizontal" | "vertical" | "both"; axisX: number; axisY: number }>;
+  readonly editingHintDismissed: boolean;
 }
 
 export interface BrushPresetSetting {
@@ -115,6 +117,7 @@ export const DEFAULT_SETTINGS: AppSettings = Object.freeze({
   keybindings: Object.freeze({ schemaVersion: KEYBINDING_SCHEMA_VERSION, preset: "suwol-default", entries: Object.freeze([]) }),
   brushPresets: Object.freeze([]),
   symmetry: Object.freeze({ mode: "off", axisX: 32, axisY: 32 }),
+  editingHintDismissed: false,
 });
 
 function clampNumber(
@@ -221,6 +224,10 @@ export function normalizeSettings(input: unknown): AppSettings {
         })) as readonly BrushPresetSetting[]
       : [],
     symmetry: parsedSymmetry.success ? parsedSymmetry.data : DEFAULT_SETTINGS.symmetry,
+    editingHintDismissed:
+      typeof root.data.editingHintDismissed === "boolean"
+        ? root.data.editingHintDismissed
+        : false,
   };
 }
 
@@ -243,5 +250,6 @@ export function resetLayout(settings: AppSettings): AppSettings {
     theme: settings.theme,
     language: settings.language,
     uiScale: settings.uiScale,
+    editingHintDismissed: settings.editingHintDismissed,
   };
 }

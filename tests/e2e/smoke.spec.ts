@@ -79,7 +79,7 @@ async function dragPixels(
 async function setHex(page: Page, value: string): Promise<void> {
   await page.locator('[data-dock-tab="palette"]').click();
   await page.getByLabel("A", { exact: true }).fill("255");
-  const input = page.getByLabel("HEX");
+  const input = page.getByTestId("palette-hex");
   await input.fill(value);
   await input.press("Enter");
 }
@@ -1532,6 +1532,129 @@ test("packaged RC10 boots legacy, corrupt, panel-free and plugin-disabled worksp
     });
     page = await waitForWorkspace(app);
     await expect(page.getByTestId("workspace-shell")).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});
+
+test("packaged basic editing UX exposes color, brush, palette, layer and export flow", async () => {
+  test.setTimeout(90_000);
+  const executablePath = findExecutable(path.resolve("out"));
+  expect(executablePath, "packaged Electron executable").not.toBeNull();
+  if (executablePath === null) throw new Error("Packaged executable was not found.");
+  const userData = path.resolve("out", "e2e-basic-editing-user-data"),
+    screenshots = path.resolve("test-results", "basic-editing-ux");
+  fs.rmSync(userData, { recursive: true, force: true });
+  fs.rmSync(screenshots, { recursive: true, force: true });
+  fs.mkdirSync(screenshots, { recursive: true });
+  const app = await electron.launch({ executablePath, args: [`--user-data-dir=${userData}`] });
+  try {
+    const page = await waitForWorkspace(app);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.getByLabel(/Language|언어/).selectOption("en");
+    await page.getByTestId("empty-new").click();
+    await page.getByLabel("Width").fill("32");
+    await page.getByLabel("Height").fill("32");
+    await page.getByTestId("create-document").click();
+
+    await expect(page.getByTestId("tool-pencil")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("current-tool")).toContainText("Pencil");
+    await expect(page.getByTestId("status-current-tool")).toContainText("Pencil · 1 px");
+    await expect(page.getByTestId("tool-options-bar")).toHaveAttribute("data-options", /foreground.*size.*opacity/);
+    await expect(page.getByTestId("editing-hint")).toBeVisible();
+    await page.getByRole("button", { name: "Dismiss editing hint" }).click();
+    await expect(page.getByTestId("editing-hint")).toHaveCount(0);
+
+    await page.getByTestId("foreground-color").fill("#ff0000");
+    await expect(page.getByTestId("foreground-color")).toHaveValue("#ff0000");
+    await page.getByTestId("brush-size").fill("3");
+    await expect(page.getByTestId("properties-brush-size")).toHaveValue("3");
+    const redPoint = await pixel(page, 10, 10);
+    await page.mouse.click(redPoint.x, redPoint.y);
+    for (let y = 9; y <= 11; y += 1)
+      for (let x = 9; x <= 11; x += 1)
+        await expectActivePixel(page, x, y, [255, 0, 0, 255]);
+    await expectActivePixel(page, 8, 10, [0, 0, 0, 0]);
+
+    await page.locator('[data-dock-tab="palette"]').click();
+    await expect(page.getByTestId("recent-colors").getByRole("button")).toHaveCount(1);
+    await setHex(page, "#0000ff");
+    const bluePoint = await pixel(page, 20, 20);
+    await page.mouse.click(bluePoint.x, bluePoint.y);
+    await expectActivePixel(page, 20, 20, [0, 0, 255, 255]);
+    const recentBefore = await page.getByTestId("recent-colors").getByRole("button").evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label")));
+    expect(recentBefore).toEqual(["Set as foreground: #0000ff", "Set as foreground: #ff0000"]);
+    await page.getByRole("button", { name: "Set as foreground: #ff0000" }).click();
+    const recentAfter = await page.getByTestId("recent-colors").getByRole("button").evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label")));
+    expect(recentAfter).toEqual(recentBefore);
+
+    await page.getByTestId("palette-add").click();
+    await setHex(page, "#0000ff");
+    await page.getByTestId("palette-add").click();
+    const palette = page.getByTestId("document-palette"),
+      swatches = palette.locator(".palette-swatch"),
+      paletteOrder = await swatches.evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label")));
+    await expect(swatches).toHaveCount(2);
+    await swatches.first().click();
+    await swatches.nth(1).click({ button: "right" });
+    expect(await swatches.evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label")))).toEqual(paletteOrder);
+    await page.getByTestId("swap-colors").click();
+    await expect(page.getByTestId("foreground-color")).toHaveValue("#0000ff");
+    await expect(page.getByTestId("background-color")).toHaveValue("#ff0000");
+    expect(await swatches.evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label")))).toEqual(paletteOrder);
+    await expect(palette.locator("input[type='text'], input:not([type])")).toHaveCount(0);
+
+    await page.getByTestId("tool-eraser").click();
+    await expect(page.getByTestId("current-tool")).toContainText("Eraser");
+    await page.getByTestId("brush-size").fill("3");
+    await page.mouse.click(redPoint.x, redPoint.y);
+    for (let y = 9; y <= 11; y += 1)
+      for (let x = 9; x <= 11; x += 1)
+        await expectActivePixel(page, x, y, [0, 0, 0, 0]);
+
+    await page.locator('[data-dock-tab="layers"]').click();
+    await page.getByTestId("layer-add").click();
+    await expect(page.getByTestId("layer-row")).toHaveCount(2);
+    await page.locator('[data-dock-tab="properties"]').click();
+    await page.getByTestId("layer-properties").getByLabel("Layer opacity").fill("75");
+    await expect(page.getByTestId("layer-properties")).toContainText("75%");
+
+    await page.evaluate(async () => window.suwolDesktop?.test?.configureDialog({ operation: "save-suwolpixel", fileName: "basic-editing.suwolpixel" }));
+    await page.evaluate(async () => window.suwolTest?.executeCommand("file.saveAs"));
+    await expect.poll(async () => (await artifactBytes(page, "basic-editing.suwolpixel"))?.byteLength ?? 0).toBeGreaterThan(100);
+    await page.evaluate(async () => window.suwolTest?.executeCommand("file.close"));
+    await page.evaluate(async () => window.suwolDesktop?.test?.configureDialog({ operation: "open", fileName: "basic-editing.suwolpixel" }));
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+O" : "Control+O");
+    await expect.poll(() => page.evaluate(() => window.suwolTest?.getCanvasSize())).toEqual({ width: 32, height: 32 });
+    await page.evaluate(async () => window.suwolDesktop?.test?.configureDialog({ operation: "save-png", fileName: "basic-editing.png" }));
+    await page.evaluate(async () => window.suwolTest?.executeCommand("file.exportPng"));
+    await expect.poll(async () => (await artifactBytes(page, "basic-editing.png"))?.byteLength ?? 0).toBeGreaterThan(50);
+    const exportedPng = await artifactBytes(page, "basic-editing.png");
+    if (exportedPng === null) throw new Error("Basic editing PNG was not exported.");
+    fs.writeFileSync(path.join(screenshots, "basic-editing.png"), exportedPng);
+
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.applyAnimationLayout"));
+    await expect(page.getByTestId("panel-timeline")).toBeVisible();
+    await page.getByTestId("toggle-onion").hover();
+    await expect(page.getByRole("tooltip", { name: /Onion Skin/ })).toContainText("requires at least two frames");
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.applyStaticLayout"));
+    await expect(page.getByTestId("panel-timeline")).toHaveCount(0);
+    await page.locator('[data-dock-tab="palette"]').click();
+    await expect(page.getByTestId("panel-palette")).toBeVisible();
+
+    for (const visual of [
+      { width: 1280, height: 720, scale: "1", theme: "dark" },
+      { width: 1920, height: 1080, scale: "1.25", theme: "light" },
+      { width: 1280, height: 720, scale: "2", theme: "dark" },
+    ] as const) {
+      await page.setViewportSize({ width: visual.width, height: visual.height });
+      await page.getByTestId("ui-scale-select").selectOption(visual.scale);
+      await page.getByTestId("theme-select").selectOption(visual.theme);
+      const toolbar = page.getByTestId("tool-options-bar"),
+        metrics = await toolbar.evaluate((element) => ({ height: element.getBoundingClientRect().height, scrollHeight: element.scrollHeight }));
+      expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.height + 1);
+      await page.screenshot({ path: path.join(screenshots, `${visual.width}x${visual.height}-${visual.scale}-${visual.theme}.png`) });
+    }
   } finally {
     await app.close();
   }

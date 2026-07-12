@@ -29,7 +29,7 @@ describe("native application menu", () => {
   });
 
   it.each(["win32", "linux"] as const)(
-    "uses the editor-first %s structure with File > Exit and one Help > About",
+    "uses the editor-first %s structure with File > Exit and Help guidance",
     (platform) => {
       installApplicationMenu(window, "en", [], platform);
       expect(installed.map((item) => item.label)).toEqual([
@@ -46,6 +46,14 @@ describe("native application menu", () => {
       ]);
       expect(submenu(installed[0]).filter((item) => item.label === "Exit")).toHaveLength(1);
       expect(submenu(installed.at(-1))).toMatchObject([
+        { label: "Quick Start" },
+        { label: "Tools" },
+        { label: "Colors and Palette" },
+        { label: "Layers" },
+        { label: "Animation" },
+        { label: "Shortcuts" },
+        { label: "Troubleshooting" },
+        { type: "separator" },
         { label: "About Suwol Pixel Studio" },
       ]);
     },
