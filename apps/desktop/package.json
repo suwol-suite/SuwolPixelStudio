@@ -1,6 +1,6 @@
 {
   "name": "@suwol/desktop",
-  "version": "1.0.1-rc.2",
+  "version": "1.0.1",
   "private": true,
   "dependencies": {
     "@suwol/command-system": "workspace:0.0.0",
@@ -8,7 +8,7 @@
     "@suwol/file-format": "workspace:0.0.0",
     "@suwol/pixel-renderer": "workspace:0.0.0",
     "@suwol/plugin-api": "workspace:1.1.0",
-    "@suwol/plugin-host": "workspace:1.0.1-rc.2",
+    "@suwol/plugin-host": "workspace:1.0.1",
     "@suwol/shared": "workspace:0.0.0",
     "@suwol/ui": "workspace:0.0.0",
     "fast-png": "8.0.0",

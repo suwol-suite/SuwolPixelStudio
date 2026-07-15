@@ -985,7 +985,7 @@ test("packaged M6 Canvas2D, diagnostics, localization and keyboard accessibility
     await expect(page.getByTestId("pixel-canvas")).toHaveAttribute("data-renderer-mode", "canvas2d");
     await page.evaluate(async () => window.suwolTest?.executeCommand("help.about"));
     const about = page.getByRole("dialog", { name: "About Suwol Pixel Studio" });
-    await expect(about).toContainText("1.0.1-rc.2");
+    await expect(about).toContainText("1.0.1");
     await expect(about).toContainText("Plugin API 1.1.0");
     await expect(about).toContainText("Apache-2.0");
     const aboutIcon = about.locator(".about-mark img");

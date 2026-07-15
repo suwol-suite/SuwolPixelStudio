@@ -40,7 +40,7 @@ export function AboutDialog({
         <dl>
           <div>
             <dt>{t("about.version")}</dt>
-            <dd>{diagnostics?.version ?? "1.0.1-rc.2"}</dd>
+            <dd>{diagnostics?.version ?? "1.0.1"}</dd>
           </div>
           <div>
             <dt>{t("about.platform")}</dt>

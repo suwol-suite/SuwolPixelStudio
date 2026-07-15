@@ -1,8 +1,8 @@
 # Suwol Pixel Studio
 
-Suwol Pixel Studio is a byte-exact desktop pixel editor built with Electron, React, and TypeScript. The current implementation is **v1.0.1-rc.2 / RC10 — Real-World Blocker Fix Release Candidate**.
+Suwol Pixel Studio is a byte-exact desktop pixel editor built with Electron, React, and TypeScript. The current implementation is **v1.0.1 / Stable — Real-World Blocker Fix Release**.
 
-## RC10 focus
+## v1.0.1 focus
 
 - One CSS-pixel coordinate pipeline for every canvas tool across zoom, pan, UI scale, Dock, Timeline, and DPR changes
 - Top-left row-major PNG import, document save/reopen, WebGL2, Canvas2D, and PNG export orientation parity
@@ -70,7 +70,7 @@ Plugins remain unsigned, so installation displays an explicit warning. Windows d
 
 ## Scope
 
-RC10 does not add collaboration, AI generation, marketplace/plugin signing infrastructure, scripting languages, vector editing, native floating panels, or external-engine-specific tilemap exporters.
+v1.0.1 does not add collaboration, AI generation, marketplace/plugin signing infrastructure, scripting languages, vector editing, native floating panels, or external-engine-specific tilemap exporters.
 
 ## License
 

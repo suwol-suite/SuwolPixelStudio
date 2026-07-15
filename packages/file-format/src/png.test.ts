@@ -65,7 +65,7 @@ describe("PNG adapter", () => {
       imported = importPng("orientation", encodePng(16, 16, expected), "Layer 1"),
       archived = EditorSession.fromSnapshot(
         deserializeSuwolPixel(
-          serializeSuwolPixel(imported.snapshot(), "1.0.1-rc.2"),
+          serializeSuwolPixel(imported.snapshot(), "1.0.1"),
         ),
       ),
       exported = decodePng(exportPng(archived.snapshot()));
