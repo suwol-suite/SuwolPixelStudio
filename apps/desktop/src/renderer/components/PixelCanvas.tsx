@@ -4,6 +4,7 @@ import {
   commitFloodFillComputation,
   commitFloatingSelection,
   copyPixels,
+  createBrushFootprint,
   floodFill,
   inclusiveRect,
   movePixels,
@@ -11,6 +12,7 @@ import {
   rasterizeLine,
   rasterizeRectangle,
   readCompositePixel,
+  nearestPaletteIndex,
   getTilemapCel,
   paintTile,
   fillTile,
@@ -46,6 +48,12 @@ import type {
   WorkspaceDocument,
   WorkspaceStore,
 } from "../editor/workspace";
+import { effectiveTool } from "../editor/workspace";
+import {
+  PointerInteractionController,
+  type PointerCleanupReason,
+  type PointerInteractionKind,
+} from "../editor/pointer-interaction";
 
 interface PixelCanvasProps {
   readonly entry: WorkspaceDocument;
@@ -56,6 +64,7 @@ interface PixelCanvasProps {
   readonly brushPreset?: BrushPresetSetting | undefined;
   readonly brushSize?: number;
   readonly brushOpacity?: number;
+  readonly onForeground?: (color: Rgba, recordRecent?: boolean) => void;
   readonly onForegroundUsed?: (color: Rgba) => void;
   readonly pluginTool?: Readonly<{ pluginId: string; toolId: string }> | null;
   readonly onPluginToolEvent?: (
@@ -87,7 +96,7 @@ interface PluginStrokeState {
 }
 const PLUGIN_TOOL_BATCH_MAX = Math.min(128, PLUGIN_LIMITS.toolPixelsPerStroke);
 
-export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], brushPreset, brushSize = 1, brushOpacity = 1, onForegroundUsed, pluginTool = null, onPluginToolEvent }: PixelCanvasProps) {
+export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], brushPreset, brushSize = 1, brushOpacity = 1, onForeground, onForegroundUsed, pluginTool = null, onPluginToolEvent }: PixelCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null),
     overlayRef = useRef<HTMLCanvasElement>(null),
     rendererRef = useRef<PixelRenderer | null>(null),
@@ -102,9 +111,20 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     fillWorkerRef = useRef<Worker | null>(null),
     pluginStrokeRef = useRef<PluginStrokeState | null>(null),
     pluginGenerationRef = useRef(0),
+    interactionRef = useRef<PointerInteractionController | null>(null),
     spaceRef = useRef(false),
     [spacePressed, setSpacePressed] = useState(false),
     [panning, setPanning] = useState(false);
+
+  interactionRef.current ??= new PointerInteractionController(
+    entry.view.interaction,
+    {
+      cancelPending: (kind, reason) => cancelPendingInteraction(kind, reason),
+      clearPreviews: () => clearTransientPreviews(false),
+      stateChanged: () => workspace.touch(),
+    },
+  );
+  const interaction = interactionRef.current;
 
   function activeBrush(): BrushPreset {
     if (brushPreset !== undefined)
@@ -123,6 +143,79 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
       flipY: false,
       center: { x: Math.floor(size / 2), y: Math.floor(size / 2) },
     };
+  }
+
+  function currentTool() {
+    return effectiveTool(entry.view);
+  }
+
+  function footprintAt(point: IntPoint) {
+    return createBrushFootprint(activeBrush(), point, {
+      documentBounds: {
+        x: 0,
+        y: 0,
+        width: entry.session.model.canvas.width,
+        height: entry.session.model.canvas.height,
+      },
+      selection: activeSelection(),
+      symmetry: entry.view.symmetry,
+    });
+  }
+
+  function previewColor(): Rgba {
+    if (entry.session.model.canvas.colorMode !== "indexed") return entry.view.foreground;
+    const palette = entry.session.model.palette,
+      index = nearestPaletteIndex(entry.view.foreground, palette.entries, palette.transparentIndex);
+    return palette.entries.find((item) => item.index === index)?.rgba ?? entry.view.foreground;
+  }
+
+  function clearTransientPreviews(clearHover: boolean): void {
+    if (clearHover) hoverRef.current = null;
+    previewPointsRef.current = [];
+    previewFloatingRef.current = null;
+    selectionPreviewRef.current = entry.view.selection.clone();
+    renderOverlay();
+  }
+
+  function cancelPendingInteraction(
+    _kind: PointerInteractionKind,
+    reason: PointerCleanupReason,
+  ): void {
+    cancelPluginStroke(reason === "plugin-deactivated" ? "deactivated" : reason === "runtime-crash" ? "crash" : "user");
+    fillWorkerRef.current?.terminate();
+    fillWorkerRef.current = null;
+    if (strokeRef.current !== null) {
+      const stroke = strokeRef.current;
+      strokeRef.current = null;
+      entry.session.cancelStroke(stroke);
+    }
+    strokeUsesForegroundRef.current = false;
+    dragRef.current = null;
+    panRef.current = null;
+    setPanning(false);
+  }
+
+  function cleanupInteraction(reason: PointerCleanupReason, clearTemporaryTool = true): boolean {
+    const hadPending = interaction.state.isPointerDown || interaction.state.kind !== "none" ||
+      strokeRef.current !== null || dragRef.current !== null || pluginStrokeRef.current !== null ||
+      fillWorkerRef.current !== null || panRef.current !== null ||
+      (clearTemporaryTool && interaction.state.temporaryToolId !== null);
+    if (hadPending) {
+      try {
+        if (!interaction.cancel(reason, clearTemporaryTool)) {
+          cancelPendingInteraction("none", reason);
+          if (clearTemporaryTool) interaction.restoreTemporaryTool();
+          clearTransientPreviews(true);
+          workspace.touch();
+        } else if (clearTemporaryTool) hoverRef.current = null;
+      } finally {
+        renderOverlay();
+      }
+    } else if (clearTemporaryTool) {
+      hoverRef.current = null;
+      renderOverlay();
+    }
+    return hadPending;
   }
 
   function queuePluginEvent(state: PluginStrokeState, input: unknown): void {
@@ -146,7 +239,8 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
       for (const operation of operations)
         state.broker.append(state.id, operation);
     }).catch(() => {
-      if (pluginStrokeRef.current === state) cancelPluginStroke("crash");
+      if (pluginStrokeRef.current === state)
+        cleanupInteraction("runtime-crash", true);
     });
   }
   function flushPluginPoints(state: PluginStrokeState): void {
@@ -204,6 +298,16 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
   function renderOverlay(): void {
     const overlay = overlayRef.current;
     if (overlay === null) return;
+    const tool = currentTool(),
+      brushPreview = hoverRef.current !== null &&
+        !spaceRef.current && panRef.current === null &&
+        (tool === "pencil" || tool === "eraser")
+          ? {
+              points: footprintAt(hoverRef.current).points,
+              color: previewColor(),
+              mode: tool === "eraser" ? "erase" as const : "paint" as const,
+            }
+          : null;
     drawEditorOverlay(
       overlay,
       entry.view.viewport,
@@ -213,14 +317,10 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
         hover: hoverRef.current,
         selection: overlaySelection(),
         previewPoints: previewPointsRef.current,
-        previewColor: entry.view.foreground,
+        previewColor: previewColor(),
         floating: previewFloatingRef.current ?? entry.view.floating,
         symmetry: entry.view.symmetry,
-        brushHoverPoints:
-          hoverRef.current !== null &&
-          (entry.view.activeTool === "pencil" || entry.view.activeTool === "eraser")
-            ? stampBrush(activeBrush(), hoverRef.current)
-            : [],
+        brushPreview,
       },
     );
     drawDeclarativeOverlays(overlay, entry.view.viewport, pluginOverlays.flatMap((update) => update.primitives));
@@ -310,17 +410,23 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
           : readCompositePixel(entry.session, point.x, point.y),
     });
   }
-  function pickColor(point: IntPoint): void {
+  function pickColor(point: IntPoint, target: "foreground" | "background"): void {
     const color = readCompositePixel(entry.session, point.x, point.y);
     if (color === null) return;
-    entry.view.foreground = color;
-    entry.view.recentColors = [
-      color,
-      ...entry.view.recentColors.filter(
-        (recent) => recent.join(",") !== color.join(","),
-      ),
-    ].slice(0, 12);
+    if (target === "background") entry.view.background = color;
+    else {
+      entry.view.foreground = color;
+      if (entry.session.model.canvas.colorMode === "indexed") {
+        const palette = entry.session.model.palette,
+          index = nearestPaletteIndex(color, palette.entries, palette.transparentIndex),
+          paletteEntry = palette.entries.find((item) => item.index === index);
+        entry.view.foregroundIndex = index;
+        entry.view.selectedPaletteColorId = paletteEntry?.id ?? null;
+      }
+      onForeground?.(color, false);
+    }
     workspace.touch();
+    renderOverlay();
   }
   function selectionOperation(event: { shiftKey: boolean; altKey: boolean }) {
     return event.shiftKey && event.altKey
@@ -365,24 +471,8 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     return committed;
   }
   function cancelTransient(): boolean {
-    if (cancelPluginStroke()) return true;
-    if (fillWorkerRef.current !== null) {
-      fillWorkerRef.current.terminate();
-      fillWorkerRef.current = null;
-      return true;
-    }
-    if (strokeRef.current !== null) {
-      entry.session.cancelStroke(strokeRef.current);
-      strokeRef.current = null;
+    if (cleanupInteraction("escape", true)) {
       refresh();
-      return true;
-    }
-    if (dragRef.current !== null) {
-      dragRef.current = null;
-      previewPointsRef.current = [];
-      previewFloatingRef.current = null;
-      selectionPreviewRef.current = entry.view.selection.clone();
-      renderOverlay();
       return true;
     }
     if (entry.view.floating !== null) {
@@ -396,17 +486,8 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     return false;
   }
   function cancelDrawingForPan(): void {
-    cancelPluginStroke();
-    fillWorkerRef.current?.terminate();
-    fillWorkerRef.current = null;
-    if (strokeRef.current !== null) {
-      entry.session.cancelStroke(strokeRef.current);
-      strokeRef.current = null;
-    }
-    dragRef.current = null;
-    previewPointsRef.current = [];
-    previewFloatingRef.current = null;
-    selectionPreviewRef.current = entry.view.selection.clone();
+    cleanupInteraction("pan", false);
+    hoverRef.current = null;
     refresh();
   }
 
@@ -533,6 +614,10 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     };
     overlay.addEventListener("wheel", wheel, { passive: false });
     resize();
+    const unregisterInteraction = workspace.registerInteractionCleanup(
+      entry.id,
+      (reason) => cleanupInteraction(reason, true),
+    );
     const keyDown = (event: KeyboardEvent) => {
       const target = event.target;
       if (
@@ -541,9 +626,22 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
         (target instanceof HTMLElement && target.isContentEditable)
       )
         return;
+      if (event.key === "Alt") {
+        if (!event.repeat && currentTool() !== "eyedropper") {
+          if (interaction.state.isPointerDown)
+            cleanupInteraction("tool-change", false);
+          interaction.activateTemporaryTool("eyedropper", entry.view.activeTool);
+          hoverRef.current = null;
+          renderOverlay();
+        }
+        event.preventDefault();
+        return;
+      }
       if (event.code === "Space") {
-        if (!spaceRef.current) cancelDrawingForPan();
-        spaceRef.current = true;
+        if (!spaceRef.current) {
+          spaceRef.current = true;
+          cancelDrawingForPan();
+        }
         setSpacePressed(true);
         event.preventDefault();
         return;
@@ -604,11 +702,30 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     };
     const keyUp = (event: KeyboardEvent) => {
       if (event.code === "Space") { spaceRef.current = false; setSpacePressed(false); }
+      if (event.key === "Alt") {
+        interaction.restoreTemporaryTool();
+        hoverRef.current = null;
+        renderOverlay();
+      }
     };
+    const pointerUp = (event: PointerEvent) => finishPointer(event.pointerId);
+    const pointerCancel = () => cleanupInteraction("pointercancel", true);
+    const blur = () => cleanupInteraction("window-blur", true);
+    const visibility = () => {
+      if (document.visibilityState !== "visible")
+        cleanupInteraction("visibility-change", true);
+    };
+    const runtimeCrash = () => cleanupInteraction("runtime-crash", true);
     window.addEventListener("keydown", keyDown);
     window.addEventListener("keyup", keyUp);
+    window.addEventListener("pointerup", pointerUp);
+    window.addEventListener("pointercancel", pointerCancel);
+    window.addEventListener("blur", blur);
+    window.addEventListener("error", runtimeCrash);
+    document.addEventListener("visibilitychange", visibility);
     return () => {
-      cancelPluginStroke("deactivated");
+      cleanupInteraction("unmount", true);
+      unregisterInteraction();
       observer.disconnect();
       window.removeEventListener("resize", resize);
       window.visualViewport?.removeEventListener("resize", resize);
@@ -619,6 +736,11 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
       fillWorkerRef.current = null;
       window.removeEventListener("keydown", keyDown);
       window.removeEventListener("keyup", keyUp);
+      window.removeEventListener("pointerup", pointerUp);
+      window.removeEventListener("pointercancel", pointerCancel);
+      window.removeEventListener("blur", blur);
+      window.removeEventListener("error", runtimeCrash);
+      document.removeEventListener("visibilitychange", visibility);
     };
   }, [entry]);
   useEffect(() => {
@@ -635,11 +757,15 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
   }, [workspace.version]);
   useEffect(
     () => () => {
-      cancelPluginStroke("deactivated");
+      cleanupInteraction(
+        pluginTool === null ? "plugin-deactivated" : "tool-change",
+        true,
+      );
     },
     [
       pluginTool?.pluginId,
       pluginTool?.toolId,
+      entry.view.activeTool,
       entry.view.activeLayerId,
       entry.view.activeFrameId,
     ],
@@ -649,33 +775,66 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     event: React.PointerEvent<HTMLCanvasElement>,
   ): void {
     if (entry.view.playback.isPlaying) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
     updateHover(event);
     if (event.button === 1 || (event.button === 0 && spaceRef.current)) {
       event.preventDefault();
       cancelDrawingForPan();
-      panRef.current = canvasPoint(event);
-      setPanning(true);
+      try {
+        interaction.begin(event.currentTarget, event.pointerId, "pan");
+        panRef.current = canvasPoint(event);
+        setPanning(true);
+        renderOverlay();
+      } catch {
+        cleanupInteraction("exception", true);
+      }
       return;
     }
     const point = pixelPoint(event);
     if (point === null) return;
-    if (beginPluginStroke(event, point)) return;
-    if (entry.view.activeTool.startsWith("tile")) {
-      applyTileTool(point);
-      return;
+    if (pluginTool !== null) {
+      try {
+        interaction.begin(event.currentTarget, event.pointerId, "plugin-tool");
+        if (beginPluginStroke(event, point)) return;
+        interaction.cancel("plugin-deactivated", false);
+      } catch {
+        cleanupInteraction("runtime-crash", true);
+        return;
+      }
     }
-    if (event.altKey && entry.view.activeTool !== "selectionRect") {
-      pickColor(point);
+    if (event.altKey && entry.view.activeTool !== "selectionRect" && currentTool() !== "eyedropper")
+      interaction.activateTemporaryTool("eyedropper", entry.view.activeTool);
+    const tool = currentTool();
+    if (tool.startsWith("tile")) {
+      try {
+        interaction.begin(
+          event.currentTarget,
+          event.pointerId,
+          tool === "tileEyedropper" ? "eyedropper" : tool === "tileSelection" ? "selection" : "stroke",
+        );
+        applyTileTool(point);
+      } catch {
+        cleanupInteraction("exception", true);
+      }
       return;
     }
     if (entry.view.floating !== null && entry.view.activeTool !== "move")
       commitFloating();
-    if (entry.view.activeTool === "eyedropper") {
-      pickColor(point);
+    if (tool === "eyedropper") {
+      try {
+        interaction.begin(event.currentTarget, event.pointerId, "eyedropper");
+        pickColor(point, event.button === 2 ? "background" : "foreground");
+      } catch {
+        cleanupInteraction("exception", true);
+      }
       return;
     }
-    if (entry.view.activeTool === "fill") {
+    if (tool === "fill") {
+      try {
+        interaction.begin(event.currentTarget, event.pointerId, "stroke");
+      } catch {
+        cleanupInteraction("exception", true);
+        return;
+      }
       try {
         const color =
             event.button === 2 ? entry.view.background : entry.view.foreground,
@@ -751,11 +910,14 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
           }
         }
       } catch {
+        cleanupInteraction("exception", true);
         return;
       }
       return;
     }
-    if (entry.view.activeTool === "selectionRect") {
+    if (tool === "selectionRect") {
+      try { interaction.begin(event.currentTarget, event.pointerId, "selection"); }
+      catch { cleanupInteraction("exception", true); return; }
       dragRef.current = { kind: "selection", start: point, current: point };
       selectionPreviewRef.current = entry.view.selection.clone();
       selectionPreviewRef.current.setRect(
@@ -766,16 +928,20 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
       return;
     }
     if (
-      entry.view.activeTool === "line" ||
-      entry.view.activeTool === "rectangle" ||
-      entry.view.activeTool === "ellipse"
+      tool === "line" ||
+      tool === "rectangle" ||
+      tool === "ellipse"
     ) {
+      try { interaction.begin(event.currentTarget, event.pointerId, "shape"); }
+      catch { cleanupInteraction("exception", true); return; }
       dragRef.current = { kind: "shape", start: point, current: point };
       previewPointsRef.current = shapePoints(point, point, event.shiftKey);
       renderOverlay();
       return;
     }
-    if (entry.view.activeTool === "move") {
+    if (tool === "move") {
+      try { interaction.begin(event.currentTarget, event.pointerId, "move"); }
+      catch { cleanupInteraction("exception", true); return; }
       if (entry.view.floating !== null) {
         dragRef.current = {
           kind: "move",
@@ -804,6 +970,7 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
             pixels: source.pixels.slice(),
           };
         } catch {
+          cleanupInteraction("exception", true);
           return;
         }
       }
@@ -811,7 +978,7 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
       return;
     }
     const baseColor: Rgba =
-      entry.view.activeTool === "eraser"
+      tool === "eraser"
         ? [0, 0, 0, 0]
         : event.button === 2
           ? entry.view.background
@@ -824,23 +991,33 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     ];
     try {
       const normalizedPreset = activeBrush();
+      interaction.begin(event.currentTarget, event.pointerId, "stroke");
       const stroke = entry.session.beginStroke(
         entry.view.activeLayerId,
         color,
-        entry.view.activeTool === "eraser"
+        tool === "eraser"
           ? t("tool.eraser")
           : t("tool.pencil"),
         {
           pixelPerfect: entry.view.pixelPerfect,
-          symmetry: entry.view.symmetry,
-          stampOffsets: stampBrush(normalizedPreset, { x: 0, y: 0 }),
+          footprint: (center) => createBrushFootprint(normalizedPreset, center, {
+            documentBounds: {
+              x: 0,
+              y: 0,
+              width: entry.session.model.canvas.width,
+              height: entry.session.model.canvas.height,
+            },
+            selection: activeSelection(),
+            symmetry: entry.view.symmetry,
+          }).points,
         },
       );
       strokeRef.current = stroke;
       strokeUsesForegroundRef.current =
-        entry.view.activeTool === "pencil" && event.button !== 2;
+        tool === "pencil" && event.button !== 2;
       refresh(stroke.addPoint(point));
     } catch {
+      cleanupInteraction("exception", true);
       return;
     }
   }
@@ -851,8 +1028,13 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     const screen = canvasPoint(event);
     if (panRef.current === null && spaceRef.current && (event.buttons & 1) !== 0) {
       cancelDrawingForPan();
-      panRef.current = screen;
-      setPanning(true);
+      try {
+        interaction.begin(event.currentTarget, event.pointerId, "pan");
+        panRef.current = screen;
+        setPanning(true);
+      } catch {
+        cleanupInteraction("exception", true);
+      }
       return;
     }
     if (panRef.current !== null) {
@@ -876,7 +1058,8 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
       ]);
       return;
     }
-    if (point !== null && (entry.view.activeTool === "tilePencil" || entry.view.activeTool === "tileEraser") && event.buttons !== 0) {
+    const tool = currentTool();
+    if (point !== null && (tool === "tilePencil" || tool === "tileEraser") && event.buttons !== 0) {
       applyTileTool(point);
       return;
     }
@@ -911,15 +1094,13 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
     }
     renderOverlay();
   }
-  function finishPointer(event: React.PointerEvent<HTMLCanvasElement>): void {
-    panRef.current = null;
-    setPanning(false);
-    if (finishPluginStroke()) {
-      if (event.currentTarget.hasPointerCapture(event.pointerId))
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      return;
-    }
-    if (strokeRef.current !== null) {
+  function finishPointer(pointerId: number): void {
+    try {
+      interaction.finish(pointerId, () => {
+        panRef.current = null;
+        setPanning(false);
+        if (finishPluginStroke()) return;
+        if (strokeRef.current !== null) {
       const stroke = strokeRef.current;
       strokeRef.current = null;
       if (entry.session.commitStroke(stroke)) {
@@ -929,9 +1110,9 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
       } else workspace.touch();
       strokeUsesForegroundRef.current = false;
       refresh();
-    }
-    const drag = dragRef.current;
-    if (drag !== null) {
+        }
+        const drag = dragRef.current;
+        if (drag !== null) {
       dragRef.current = null;
       if (drag.kind === "shape") {
         const points = previewPointsRef.current;
@@ -988,9 +1169,11 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
         previewFloatingRef.current = null;
         renderOverlay();
       }
+        }
+      });
+    } catch {
+      cleanupInteraction("exception", true);
     }
-    if (event.currentTarget.hasPointerCapture(event.pointerId))
-      event.currentTarget.releasePointerCapture(event.pointerId);
   }
   return (
     <div className={`pixel-canvas-host ${spacePressed || panning ? "pan-ready" : ""} ${panning ? "panning" : ""}`} data-testid="pixel-canvas-host" data-pan-state={panning ? "grabbing" : spacePressed ? "grab" : "idle"}>
@@ -1010,13 +1193,17 @@ export function PixelCanvas({ entry, workspace, status, t, pluginOverlays = [], 
         onAuxClick={(event) => event.preventDefault()}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
-        onPointerUp={finishPointer}
-        onPointerCancel={(event) => {
-          cancelTransient();
-          finishPointer(event);
+        onPointerUp={(event) => finishPointer(event.pointerId)}
+        onPointerCancel={() => cleanupInteraction("pointercancel", true)}
+        onLostPointerCapture={(event) => {
+          if (entry.view.interaction.pointerId === event.pointerId)
+            cleanupInteraction("lostpointercapture", true);
         }}
-        onPointerLeave={() => {
+        onPointerLeave={(event) => {
           hoverRef.current = null;
+          const pointerId = entry.view.interaction.pointerId;
+          if (pointerId !== null && !event.currentTarget.hasPointerCapture(pointerId))
+            cleanupInteraction("pointerleave", true);
           renderOverlay();
         }}
       />

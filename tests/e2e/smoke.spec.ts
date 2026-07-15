@@ -134,7 +134,16 @@ async function expectRenderedPixel(
     pageSize = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
   if (box === null || viewport === null)
     throw new Error("Rendered viewport is unavailable.");
-  const shot = decode(await page.screenshot()),
+  const overlay = page.getByTestId("pixel-canvas"),
+    previousVisibility = await overlay.evaluate((element) => element.style.visibility);
+  await overlay.evaluate((element) => { element.style.visibility = "hidden"; });
+  let screenshot: Buffer;
+  try {
+    screenshot = await page.screenshot();
+  } finally {
+    await overlay.evaluate((element, visibility) => { element.style.visibility = visibility; }, previousVisibility);
+  }
+  const shot = decode(screenshot),
     scaleX = shot.width / pageSize.width,
     scaleY = shot.height / pageSize.height,
     sampleX = Math.max(0, Math.min(shot.width - 1, Math.floor((box.x + viewport.panX + (x + 0.5) * viewport.zoom) * scaleX))),
@@ -144,6 +153,56 @@ async function expectRenderedPixel(
       ? Array.from(shot.data.slice(offset, offset + 4))
       : [...shot.data.slice(offset, offset + 3), 255];
   expect(actual).toEqual(expected);
+}
+
+async function expectCanvas2dPixel(
+  page: Page,
+  x: number,
+  y: number,
+  expected: readonly number[],
+): Promise<void> {
+  await expect.poll(() => page.evaluate(([px, py]) => {
+    const canvas = document.querySelector<HTMLCanvasElement>("canvas.pixel-canvas"),
+      viewport = window.suwolTest?.getViewport(),
+      context = canvas?.getContext("2d");
+    if (canvas === null || viewport === null || viewport === undefined || context === null || context === undefined)
+      return null;
+    const scaleX = canvas.width / Math.max(1, canvas.clientWidth),
+      scaleY = canvas.height / Math.max(1, canvas.clientHeight),
+      sampleX = Math.max(0, Math.min(canvas.width - 1, Math.floor((viewport.panX + (px + 0.5) * viewport.zoom) * scaleX))),
+      sampleY = Math.max(0, Math.min(canvas.height - 1, Math.floor((viewport.panY + (py + 0.5) * viewport.zoom) * scaleY)));
+    return Array.from(context.getImageData(sampleX, sampleY, 1, 1).data);
+  }, [x, y] as const)).toEqual(expected);
+}
+
+async function overlayPixelSet(page: Page, width: number, height: number): Promise<string[]> {
+  return await page.evaluate(({ width, height }) => {
+    const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="pixel-canvas"]'),
+      viewport = window.suwolTest?.getViewport();
+    if (canvas === null || viewport === null || viewport === undefined) return [];
+    const context = canvas.getContext("2d"),
+      scaleX = canvas.width / Math.max(1, canvas.clientWidth),
+      scaleY = canvas.height / Math.max(1, canvas.clientHeight),
+      points: string[] = [];
+    if (context === null) return points;
+    for (let y = 0; y < height; y += 1)
+      for (let x = 0; x < width; x += 1) {
+        const sx = Math.max(0, Math.min(canvas.width - 1, Math.floor((viewport.panX + (x + 0.5) * viewport.zoom) * scaleX))),
+          sy = Math.max(0, Math.min(canvas.height - 1, Math.floor((viewport.panY + (y + 0.5) * viewport.zoom) * scaleY)));
+        if ((context.getImageData(sx, sy, 1, 1).data[3] ?? 0) > 20) points.push(`${x},${y}`);
+      }
+    return points.sort();
+  }, { width, height });
+}
+
+async function nonTransparentPixelSet(page: Page, width: number, height: number): Promise<string[]> {
+  return await page.evaluate(({ width, height }) => {
+    const points: string[] = [];
+    for (let y = 0; y < height; y += 1)
+      for (let x = 0; x < width; x += 1)
+        if ((window.suwolTest?.getActivePixel(x, y)?.[3] ?? 0) > 0) points.push(`${x},${y}`);
+    return points.sort();
+  }, { width, height });
 }
 
 function minimalAseprite(): Uint8Array {
@@ -636,6 +695,8 @@ test("packaged M3 frame/cel animation, exports, v3 round-trip and recovery", asy
     page = await waitForWorkspace(app);
     await expect(page.getByRole("dialog")).toBeVisible({ timeout: 15_000 });
     await page.getByRole("button", { name: /Recover|복구/ }).first().click();
+    if (await page.getByTestId("animation-timeline").count() === 0)
+      await page.evaluate(async () => window.suwolTest?.executeCommand("window.toggleTimeline"));
     await expect(page.getByTestId("animation-timeline")).toBeVisible();
     expect(await page.evaluate(() => window.suwolTest?.getAnimationState()?.frameCount)).toBe(savedState?.frameCount);
     await expect(page.locator(".document-tab.active")).toContainText("•");
@@ -1460,8 +1521,8 @@ test("packaged RC10 Canvas2D keeps top-left PNG orientation", async () => {
     await expect(page.getByTestId("pixel-canvas")).toHaveAttribute("data-renderer-mode", "canvas2d");
     await expectActivePixel(page, 0, 0, [255, 0, 0, 255]);
     await expectActivePixel(page, 0, 15, [0, 0, 255, 255]);
-    await expectRenderedPixel(page, 0, 0, [255, 0, 0, 255]);
-    await expectRenderedPixel(page, 0, 15, [0, 0, 255, 255]);
+    await expectCanvas2dPixel(page, 0, 0, [255, 0, 0, 255]);
+    await expectCanvas2dPixel(page, 0, 15, [0, 0, 255, 255]);
   } finally {
     await app.close();
   }
@@ -1655,6 +1716,155 @@ test("packaged basic editing UX exposes color, brush, palette, layer and export 
       expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.height + 1);
       await page.screenshot({ path: path.join(screenshots, `${visual.width}x${visual.height}-${visual.scale}-${visual.theme}.png`) });
     }
+  } finally {
+    await app.close();
+  }
+});
+
+test("packaged brush footprint preview and Eyedropper lifecycle never lock tools", async () => {
+  test.setTimeout(240_000);
+  const executablePath = findExecutable(path.resolve("out"));
+  expect(executablePath, "packaged Electron executable").not.toBeNull();
+  if (executablePath === null) throw new Error("Packaged executable was not found.");
+  const userData = path.resolve("out", "e2e-pointer-lifecycle-user-data");
+  fs.rmSync(userData, { recursive: true, force: true });
+  const app = await electron.launch({ executablePath, args: [`--user-data-dir=${userData}`] });
+  try {
+    const page = await waitForWorkspace(app);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.getByLabel(/Language|언어/).selectOption("en");
+    await page.getByTestId("empty-new").click();
+    await page.getByLabel("Name", { exact: true }).fill("First");
+    await page.getByTestId("create-document").click();
+    const toolbarBox = await page.getByTestId("tool-options-bar").boundingBox(),
+      tabsBox = await page.locator(".document-tabs").boundingBox();
+    expect(toolbarBox).not.toBeNull();
+    expect(tabsBox).not.toBeNull();
+    expect((toolbarBox?.y ?? 1_000) + (toolbarBox?.height ?? 0)).toBeLessThanOrEqual(tabsBox?.y ?? 0);
+
+    await page.getByTestId("brush-size").fill("5");
+    const center = await pixel(page, 20, 20),
+      expectedFive = Array.from({ length: 5 }, (_, dy) =>
+        Array.from({ length: 5 }, (_, dx) => `${18 + dx},${18 + dy}`),
+      ).flat().sort();
+    await page.mouse.move(center.x, center.y);
+    await expect.poll(() => overlayPixelSet(page, 64, 64)).toEqual(expectedFive);
+    await page.mouse.click(center.x, center.y);
+    await expect.poll(() => nonTransparentPixelSet(page, 64, 64)).toEqual(expectedFive);
+
+    await page.getByTestId("tool-eraser").click();
+    await expect(page.getByTestId("tool-options-bar")).toHaveAttribute("data-options", "size opacity preset");
+    await page.mouse.move(center.x, center.y);
+    await expect.poll(() => overlayPixelSet(page, 64, 64)).toEqual(expectedFive);
+    await page.mouse.click(center.x, center.y);
+    await expect.poll(() => nonTransparentPixelSet(page, 64, 64)).toEqual([]);
+
+    await page.getByTestId("tool-pencil").click();
+    await page.evaluate(async () => window.suwolTest?.executeCommand("symmetry.vertical"));
+    const symmetryCenter = await pixel(page, 10, 25),
+      symmetryExpected = [10, 53].flatMap((centerX) =>
+        Array.from({ length: 5 }, (_, dy) =>
+          Array.from({ length: 5 }, (_, dx) => `${centerX - 2 + dx},${23 + dy}`),
+        ).flat(),
+      ).sort();
+    await page.mouse.move(symmetryCenter.x, symmetryCenter.y);
+    await expect.poll(() => overlayPixelSet(page, 64, 64)).toEqual(symmetryExpected);
+    await page.mouse.click(symmetryCenter.x, symmetryCenter.y);
+    await expect.poll(() => nonTransparentPixelSet(page, 64, 64)).toEqual(symmetryExpected);
+    await page.evaluate(async () => window.suwolTest?.executeCommand("symmetry.off"));
+
+    await page.getByTestId("foreground-color").fill("#ff0000");
+    const red = await pixel(page, 8, 8),
+      blue = await pixel(page, 12, 8);
+    await page.mouse.click(red.x, red.y);
+    await page.getByTestId("foreground-color").fill("#0000ff");
+    await page.mouse.click(blue.x, blue.y);
+    await page.getByTestId("tool-eyedropper").click();
+    await expect(page.getByTestId("eyedropper-options")).toContainText("Left click");
+    await page.mouse.click(red.x, red.y);
+    await expect(page.getByTestId("tool-eyedropper")).toHaveAttribute("aria-pressed", "true");
+    await page.mouse.click(blue.x, blue.y, { button: "right" });
+    await expect(page.getByTestId("tool-eyedropper")).toHaveAttribute("aria-pressed", "true");
+    await page.getByTestId("tool-pencil").click();
+    await expect(page.getByTestId("foreground-color")).toHaveValue("#ff0000");
+    await expect(page.getByTestId("background-color")).toHaveValue("#0000ff");
+
+    await page.keyboard.down("Alt");
+    await expect(page.getByTestId("current-tool")).toContainText("Eyedropper");
+    await expect(page.getByTestId("status-current-tool")).toContainText("temporary");
+    await page.mouse.click(red.x, red.y);
+    await page.keyboard.up("Alt");
+    await expect(page.getByTestId("current-tool")).toContainText("Pencil");
+
+    const outside = await page.getByTestId("right-dock").boundingBox();
+    if (outside === null) throw new Error("Right Dock bounds unavailable.");
+    const outsideStart = await pixel(page, 30, 30);
+    await page.mouse.move(outsideStart.x, outsideStart.y);
+    await page.mouse.down();
+    await page.mouse.move(outside.x + 30, outside.y + 80, { steps: 4 });
+    await page.mouse.up();
+    await page.getByTestId("tool-eraser").click();
+    await page.getByTestId("tool-pencil").click();
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await page.bringToFront();
+    await page.getByTestId("tool-pencil").click();
+
+    await page.getByTestId("brush-size").fill("1");
+    for (let index = 0; index < 100; index += 1) {
+      await page.getByTestId("tool-pencil").click();
+      await page.getByTestId("tool-eyedropper").click();
+      const beforeSample = await page.evaluate(() => window.suwolTest?.getActiveDocumentHash());
+      await page.mouse.click(red.x, red.y);
+      expect(await page.evaluate(() => window.suwolTest?.getActiveDocumentHash())).toBe(beforeSample);
+      await page.getByTestId("tool-eraser").click();
+      await page.getByTestId("tool-pencil").click();
+      await page.keyboard.down("Alt");
+      await page.mouse.click(red.x, red.y);
+      await page.keyboard.up("Alt");
+      await page.getByTestId("tool-pencil").click();
+      await page.getByTestId("tool-selectionRect").click();
+      await page.keyboard.press("Escape");
+      await page.getByTestId("tool-pencil").click();
+      const target = await pixel(page, 40 + index % 10, 40 + Math.floor(index / 10));
+      await page.mouse.click(target.x, target.y);
+      await expectActivePixel(page, 40 + index % 10, 40 + Math.floor(index / 10), [255, 0, 0, 255]);
+      await expect(page.getByTestId("current-tool")).toContainText("Pencil");
+    }
+
+    const held = await pixel(page, 25, 25);
+    await page.mouse.move(held.x, held.y);
+    await page.mouse.down();
+    await page.evaluate(async () => window.suwolTest?.executeCommand("file.new"));
+    const newDocumentDialog = page.getByRole("dialog");
+    await expect(newDocumentDialog).toBeVisible();
+    await page.mouse.up();
+    await newDocumentDialog.getByLabel("Name", { exact: true }).fill("Indexed");
+    await newDocumentDialog.getByRole("combobox").selectOption("indexed");
+    await newDocumentDialog.getByLabel("Width").fill("32");
+    await newDocumentDialog.getByLabel("Height").fill("32");
+    await page.getByTestId("create-document").click();
+    await expect(newDocumentDialog).toHaveCount(0);
+    await page.evaluate(async () => window.suwolTest?.executeCommand("view.zoomFit"));
+    await page.getByTestId("brush-size").fill("5");
+    const indexedCenter = await pixel(page, 10, 10),
+      indexedExpected = Array.from({ length: 5 }, (_, dy) =>
+        Array.from({ length: 5 }, (_, dx) => `${8 + dx},${8 + dy}`),
+      ).flat().sort();
+    await page.mouse.move(indexedCenter.x, indexedCenter.y);
+    await expect.poll(() => overlayPixelSet(page, 32, 32)).toEqual(indexedExpected);
+    await page.mouse.click(indexedCenter.x, indexedCenter.y);
+    await expect.poll(() => nonTransparentPixelSet(page, 32, 32)).toEqual(indexedExpected);
+
+    await page.getByRole("tab", { name: /First/ }).click();
+    await page.getByRole("separator", { name: "Resize Right Dock" }).dragTo(page.getByTestId("right-dock"), { targetPosition: { x: 40, y: 100 } });
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.toggleTimeline"));
+    await expect(page.getByTestId("panel-timeline")).toBeVisible();
+    await page.evaluate(async () => window.suwolTest?.executeCommand("window.toggleTimeline"));
+    await expect(page.getByTestId("panel-timeline")).toHaveCount(0);
+    await page.getByTestId("tool-pencil").click();
+    const finalPoint = await pixel(page, 55, 55);
+    await page.mouse.click(finalPoint.x, finalPoint.y);
+    await expectActivePixel(page, 55, 55, [255, 0, 0, 255]);
   } finally {
     await app.close();
   }

@@ -35,6 +35,7 @@ import type { Translate } from "../i18n";
 import { toolOptionIds } from "../editor/tool-options";
 import { moveDocumentPaletteColor } from "../editor/palette-order";
 import {
+  effectiveTool,
   parseHexColor,
   rgbaToHex,
   type CanvasStatusStore,
@@ -438,7 +439,7 @@ function LayersPanel({
     return <p className="panel-empty">{t("status.noDocument")}</p>;
   const { session, view } = entry,
     canvas = () => workspace.invalidateCanvas(entry.id);
-  const activate = (id: string): void => { view.activeLayerId = id; workspace.touch(); };
+  const activate = (id: string): void => { workspace.cancelInteraction(entry.id, "layer-change"); view.activeLayerId = id; workspace.touch(); };
   return (
     <div className="layers-panel">
       <div className="layer-actions" role="toolbar" aria-label={t("layer.toolbar")}>
@@ -552,8 +553,8 @@ function ToolOptions({
   const entry = workspace.active;
   if (entry === null)
     return <p className="panel-empty">{t("panel.empty.properties")}</p>;
-  const tool = entry.view.activeTool,
-    view = entry.view,
+  const view = entry.view,
+    tool = effectiveTool(view),
     layer = entry.session.model.layers[view.activeLayerId],
     selection = view.selection.bounds,
     tilemap = layer?.kind === "tilemap"
@@ -730,7 +731,7 @@ function StatusBar({
       <div className="status-message">
         <span className="status-dot" />
         {t("status.ready")}
-        {workspace.active !== null && <><span className="status-separator" /><span data-testid="status-current-tool">{t("toolOptions.currentTool")}: {t(`tool.${workspace.active.view.activeTool}`)} · {workspace.active.view.brushSize} px</span></>}
+        {workspace.active !== null && <><span className="status-separator" /><span data-testid="status-current-tool">{t("toolOptions.currentTool")}: {t(`tool.${effectiveTool(workspace.active.view)}`)} · {workspace.active.view.brushSize} px{workspace.active.view.interaction.temporaryToolId === null ? "" : ` · ${t("toolOptions.temporary")}`}</span></>}
         <span className="status-hint">{t("status.panHint")}</span>
         <span className="status-separator" />
         <span>{canvas.x === null ? "—" : `${canvas.x}, ${canvas.y}`}</span>
@@ -828,8 +829,9 @@ function ToolOptionsBar({
   const entry = workspace.active;
   if (entry === null) return null;
   const view = entry.view,
-    tool = view.activeTool,
+    tool = effectiveTool(view),
     brushTool = tool === "pencil" || tool === "eraser" || tool === "line" || tool === "rectangle" || tool === "ellipse",
+    showColors = tool !== "eraser" && tool !== "eyedropper",
     setSize = (value: number): void => {
       view.brushSize = Math.min(64, Math.max(1, Math.round(value)));
       view.brushPresetId = null;
@@ -846,7 +848,7 @@ function ToolOptionsBar({
         <Icon name={toolIcons[tool]} />
         <span>{t(`tool.${tool}`)}</span>
       </div>
-      <div className="toolbar-color-stack" aria-label={`${t("color.foreground")}, ${t("color.background")}`}>
+      {showColors && <><div className="toolbar-color-stack" aria-label={`${t("color.foreground")}, ${t("color.background")}`}>
         <Tooltip metadata={{ name: t("color.foreground"), description: t("color.foregroundDescription") }}>
           {(descriptionId) => <label className="toolbar-color foreground" aria-describedby={descriptionId} style={{ background: colorCss(view.foreground) }}>
             <span className="sr-live">{t("color.foreground")}: {rgbaToHex(view.foreground)}</span>
@@ -860,7 +862,8 @@ function ToolOptionsBar({
           </label>}
         </Tooltip>
       </div>
-      <IconButton label={t("color.swap")} icon="swap" testId="swap-colors" onClick={() => { const foreground = view.foreground; onForeground(view.background); setBackground(foreground); }} />
+      <IconButton label={t("color.swap")} icon="swap" testId="swap-colors" onClick={() => { const foreground = view.foreground; onForeground(view.background); setBackground(foreground); }} /></>}
+      {tool === "eyedropper" && <div className="eyedropper-options" data-testid="eyedropper-options"><span>{t("toolOptions.eyedropperLeft")}</span><span>{t("toolOptions.eyedropperRight")}</span><span>{t("toolOptions.eyedropperAlt")}</span></div>}
       {brushTool && <>
         <span className="toolbar-label">{tool === "line" || tool === "rectangle" || tool === "ellipse" ? t("toolOptions.thickness") : t("brush.size")}</span>
         <Tooltip metadata={{ name: t("brush.decrease"), description: t("brush.decrease"), shortcut: "[" }}>
@@ -877,7 +880,7 @@ function ToolOptionsBar({
       {tool === "selectionRect" && <label className="toolbar-select"><span>{t("toolOptions.selectionMode")}</span><select value={view.selectionOperation} onChange={(event) => { view.selectionOperation = event.target.value as SelectionOperation; workspace.touch(); }}>{(["replace", "add", "subtract", "intersect"] as const).map((operation) => <option key={operation} value={operation}>{t(`selection.${operation}`)}</option>)}</select></label>}
       {tool === "move" && <span className="toolbar-muted">{view.selection.bounds === null ? t("toolOptions.moveLayer") : t("toolOptions.moveSelection")}</span>}
       {tool.startsWith("tile") && <><label className="toolbar-number"><span>{t("tilemap.selectedTile")}</span><input type="number" min="0" value={view.selectedTileId} onChange={(event) => { view.selectedTileId = Math.max(0, Math.round(Number(event.target.value))); workspace.touch(); }} /></label><label className="toolbar-select"><span>{t("toolOptions.tileRotation")}</span><select value={view.tileTransform.rotation} onChange={(event) => { view.tileTransform = { ...view.tileTransform, rotation: Number(event.target.value) as 0 | 1 | 2 | 3 }; workspace.touch(); }}>{[0, 1, 2, 3].map((rotation) => <option value={rotation} key={rotation}>{rotation * 90}°</option>)}</select></label><label className="toolbar-check"><input type="checkbox" checked={view.tileTransform.flipX} onChange={(event) => { view.tileTransform = { ...view.tileTransform, flipX: event.target.checked }; workspace.touch(); }} />{t("toolOptions.flipHorizontal")}</label><label className="toolbar-check"><input type="checkbox" checked={view.tileTransform.flipY} onChange={(event) => { view.tileTransform = { ...view.tileTransform, flipY: event.target.checked }; workspace.touch(); }} />{t("toolOptions.flipVertical")}</label></>}
-      {brushTool && <details className="tool-options-overflow"><summary aria-label={t("toolOptions.more")}>…</summary><div><label>{t("brush.preset")}<select value={view.brushPresetId ?? ""} onChange={(event) => { const id = event.target.value || null, preset = settings.brushPresets.find((item) => item.id === id); view.brushPresetId = id; if (preset !== undefined) { view.brushSize = Math.max(preset.width, preset.height); view.brushOpacity = preset.opacity; } workspace.touch(); }}><option value="">{view.brushSize} px Square</option>{settings.brushPresets.map((preset) => <option value={preset.id} key={preset.id}>{preset.name}</option>)}</select></label><label><input type="checkbox" checked={view.pixelPerfect} onChange={(event) => { view.pixelPerfect = event.target.checked; workspace.touch(); }} />{t("brush.pixelPerfect")}</label><label>{t("symmetry.mode")}<select value={view.symmetry.mode} onChange={(event) => { view.symmetry = { ...view.symmetry, mode: event.target.value as typeof view.symmetry.mode }; workspace.touch(); }}><option value="off">{t("symmetry.off")}</option><option value="horizontal">{t("symmetry.horizontal")}</option><option value="vertical">{t("symmetry.vertical")}</option><option value="both">{t("symmetry.both")}</option></select></label></div></details>}
+      {brushTool && <details className="tool-options-overflow"><summary aria-label={t("toolOptions.more")}>…</summary><div><label>{t("brush.preset")}<select value={view.brushPresetId ?? ""} onChange={(event) => { const id = event.target.value || null, preset = settings.brushPresets.find((item) => item.id === id); view.brushPresetId = id; if (preset !== undefined) { view.brushSize = Math.max(preset.width, preset.height); view.brushOpacity = preset.opacity; } workspace.touch(); }}><option value="">{view.brushSize} px Square</option>{settings.brushPresets.map((preset) => <option value={preset.id} key={preset.id}>{preset.name}</option>)}</select></label>{tool === "pencil" && <><label><input type="checkbox" checked={view.pixelPerfect} onChange={(event) => { view.pixelPerfect = event.target.checked; workspace.touch(); }} />{t("brush.pixelPerfect")}</label><label>{t("symmetry.mode")}<select value={view.symmetry.mode} onChange={(event) => { view.symmetry = { ...view.symmetry, mode: event.target.value as typeof view.symmetry.mode }; workspace.touch(); }}><option value="off">{t("symmetry.off")}</option><option value="horizontal">{t("symmetry.horizontal")}</option><option value="vertical">{t("symmetry.vertical")}</option><option value="both">{t("symmetry.both")}</option></select></label></>}</div></details>}
     </div>
   );
 }
@@ -963,6 +966,14 @@ export function EditorShell({
   };
   return (
     <div className="app-shell" data-testid="workspace-shell">
+      {active !== null && (
+        <ToolOptionsBar
+          settings={settings}
+          workspace={workspace}
+          t={t}
+          onForeground={onForeground}
+        />
+      )}
       <header className="document-tabs">
         <div className="tab-list" role="tablist" aria-label={t("tabs.documents")}>
           {workspace.documents.map((entry, index) => (
@@ -1011,14 +1022,6 @@ export function EditorShell({
             ))}
         </div>
       </header>
-      {active !== null && (
-        <ToolOptionsBar
-          settings={settings}
-          workspace={workspace}
-          t={t}
-          onForeground={onForeground}
-        />
-      )}
       <main className="workspace-main">
         {layout.toolsVisible && (
             <aside
@@ -1033,7 +1036,7 @@ export function EditorShell({
                   {...(toolShortcuts[tool] === undefined ? {} : { shortcut: toolShortcuts[tool] })}
                   icon={toolIcons[tool]}
                   testId={`tool-${tool}`}
-                  pressed={active?.view.activeTool === tool}
+                  pressed={active !== null && effectiveTool(active.view) === tool}
                   disabled={active === null}
                   disabledReason={t("tooltip.disabled.noDocument")}
                   key={tool}
@@ -1102,6 +1105,7 @@ export function EditorShell({
               brushPreset={settings.brushPresets.find((preset) => preset.id === active.view.brushPresetId)}
               brushSize={active.view.brushSize}
               brushOpacity={active.view.brushOpacity}
+              onForeground={onForeground}
               onForegroundUsed={onForegroundUsed}
             />
           </section>

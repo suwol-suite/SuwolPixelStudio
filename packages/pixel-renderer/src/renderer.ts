@@ -420,6 +420,11 @@ export interface EditorOverlayState {
   readonly floating: FloatingSelection | null;
   readonly symmetry?: Readonly<{ mode: "off" | "horizontal" | "vertical" | "both"; axisX: number; axisY: number }>;
   readonly brushHoverPoints?: readonly IntPoint[];
+  readonly brushPreview?: Readonly<{
+    points: readonly IntPoint[];
+    color: Rgba;
+    mode: "paint" | "erase";
+  }> | null;
 }
 
 export function drawEditorOverlay(
@@ -575,17 +580,16 @@ export function drawEditorOverlay(
     context.setLineDash([]);
   }
   const hover = state.hover,
+    brushPreview = state.brushPreview ?? null,
     brushHoverPoints = state.brushHoverPoints ?? [];
-  if (brushHoverPoints.length > 0) {
-    context.strokeStyle = "#ffffff";
-    context.lineWidth = Math.max(1, 2 / ratio);
-    for (const point of brushHoverPoints)
-      context.strokeRect(
-        viewport.panX + point.x * viewport.zoom + 0.5,
-        viewport.panY + point.y * viewport.zoom + 0.5,
-        viewport.zoom - 1,
-        viewport.zoom - 1,
-      );
+  if (brushPreview !== null && brushPreview.points.length > 0) {
+    drawBrushPreview(context, viewport, brushPreview, ratio);
+  } else if (brushHoverPoints.length > 0) {
+    drawBrushPreview(context, viewport, {
+      points: brushHoverPoints,
+      color: state.previewColor,
+      mode: "paint",
+    }, ratio);
   } else if (hover !== null) {
     context.strokeStyle = "#ffffff";
     context.lineWidth = Math.max(1, 2 / ratio);
@@ -596,6 +600,65 @@ export function drawEditorOverlay(
       viewport.zoom - 1,
     );
   }
+  context.restore();
+}
+
+function drawBrushPreview(
+  context: CanvasRenderingContext2D,
+  viewport: Viewport,
+  preview: Readonly<{ points: readonly IntPoint[]; color: Rgba; mode: "paint" | "erase" }>,
+  ratio: number,
+): void {
+  const [red, green, blue, alpha] = preview.color,
+    zoom = viewport.zoom,
+    pointSet = new Set(preview.points.map((point) => `${point.x},${point.y}`));
+  context.save();
+  if (preview.mode === "paint") {
+    context.fillStyle = `rgba(${red},${green},${blue},${Math.max(0.22, (alpha / 255) * 0.46)})`;
+    for (const point of preview.points)
+      context.fillRect(
+        viewport.panX + point.x * zoom,
+        viewport.panY + point.y * zoom,
+        zoom,
+        zoom,
+      );
+  } else {
+    context.fillStyle = "rgba(255,255,255,.16)";
+    context.strokeStyle = "rgba(30,30,30,.72)";
+    context.lineWidth = Math.max(1, 1 / ratio);
+    for (const point of preview.points) {
+      const left = viewport.panX + point.x * zoom,
+        top = viewport.panY + point.y * zoom;
+      context.fillRect(left, top, zoom, zoom);
+      if (zoom >= 3) {
+        context.beginPath();
+        context.moveTo(left, top + zoom);
+        context.lineTo(left + zoom, top);
+        context.stroke();
+      }
+    }
+  }
+  const traceBoundary = (): void => {
+    context.beginPath();
+    for (const point of preview.points) {
+      const left = viewport.panX + point.x * zoom,
+        top = viewport.panY + point.y * zoom,
+        right = left + zoom,
+        bottom = top + zoom;
+      if (!pointSet.has(`${point.x - 1},${point.y}`)) { context.moveTo(left, top); context.lineTo(left, bottom); }
+      if (!pointSet.has(`${point.x + 1},${point.y}`)) { context.moveTo(right, top); context.lineTo(right, bottom); }
+      if (!pointSet.has(`${point.x},${point.y - 1}`)) { context.moveTo(left, top); context.lineTo(right, top); }
+      if (!pointSet.has(`${point.x},${point.y + 1}`)) { context.moveTo(left, bottom); context.lineTo(right, bottom); }
+    }
+  };
+  traceBoundary();
+  context.strokeStyle = "rgba(0,0,0,.9)";
+  context.lineWidth = Math.max(2, 2 / ratio);
+  context.stroke();
+  traceBoundary();
+  context.strokeStyle = "rgba(255,255,255,.96)";
+  context.lineWidth = Math.max(1, 1 / ratio);
+  context.stroke();
   context.restore();
 }
 

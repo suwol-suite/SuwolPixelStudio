@@ -410,6 +410,7 @@ export function App() {
     entry.view.playback.lastTime = 0;
   }
   function selectFrame(entry: WorkspaceDocument, frameId: FrameId): void {
+    workspace.cancelInteraction(entry.id, "frame-change");
     stopPlayback(entry);
     commitFloating(entry);
     entry.view.activeFrameId = frameId;
@@ -673,6 +674,7 @@ export function App() {
     if (entry === null) throw new Error("An active document is required.");
     const layer = entry.session.model.layers[entry.view.activeLayerId];
     if (layer?.kind !== "pixel") throw new Error("Plugin tools require an active Pixel Layer.");
+    workspace.cancelInteraction(entry.id, "tool-change");
     entry.view.pluginTool = { pluginId, toolId };
     workspace.touch();
     return Promise.resolve();
@@ -700,6 +702,7 @@ export function App() {
   function setTool(tool: ToolId): void {
     const entry = workspace.active;
     if (entry !== null) {
+      workspace.cancelInteraction(entry.id, "tool-change");
       entry.view.activeTool = tool;
       entry.view.pluginTool = null;
       workspace.touch();
@@ -1851,7 +1854,11 @@ export function App() {
         category: "category.window",
         canExecute: () => true,
         isChecked: () => panels.isVisible("timeline"),
-        execute: () => togglePanel("timeline"),
+        execute: () => {
+          const entry = workspace.active;
+          if (entry !== null) workspace.cancelInteraction(entry.id, "layout-change");
+          togglePanel("timeline");
+        },
       },
       ...(
         [
@@ -1876,6 +1883,7 @@ export function App() {
         execute: () => {
           const entry = workspace.active;
           if (entry !== null) {
+            workspace.cancelInteraction(entry.id, "layer-change");
             entry.view.activeLayerId = entry.session.addLayer(
               `${tRef.current("panel.layers")} ${entry.session.model.layerOrder.length + 1}`,
             );
@@ -1894,6 +1902,7 @@ export function App() {
           const entry = workspace.active,
             id = activeLayer();
           if (entry !== null && id !== null) {
+            workspace.cancelInteraction(entry.id, "layer-change");
             const index = entry.session.model.layerOrder.indexOf(id);
             deleteLayerTree(entry.session, id);
             entry.view.activeLayerId =
@@ -1913,6 +1922,7 @@ export function App() {
           const entry = workspace.active,
             id = activeLayer();
           if (entry !== null && id !== null) {
+            workspace.cancelInteraction(entry.id, "layer-change");
             const layer = entry.session.model.layers[id];
             if (layer !== undefined)
               entry.view.activeLayerId = duplicateLayerTree(

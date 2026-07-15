@@ -129,12 +129,12 @@ svg {
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 2.45rem auto minmax(0, 1fr) auto auto auto;
+  grid-template-rows: auto 2.45rem minmax(0, 1fr) auto auto auto;
   overflow: hidden;
   background: var(--app-bg);
 }
-.app-shell > .document-tabs { grid-row: 1; }
-.app-shell > .tool-options-bar { grid-row: 2; }
+.app-shell > .tool-options-bar { grid-row: 1; }
+.app-shell > .document-tabs { grid-row: 2; }
 .app-shell > .workspace-main { grid-row: 3; }
 .app-shell > .splitter-horizontal { grid-row: 4; }
 .app-shell > .timeline-panel { grid-row: 5; }

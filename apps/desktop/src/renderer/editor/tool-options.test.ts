@@ -13,6 +13,11 @@ describe("contextual tool options", () => {
       "symmetry",
     ]);
     expect(toolOptionIds("eraser")).toEqual(["size", "opacity", "preset"]);
+    expect(toolOptionIds("eyedropper")).toEqual([
+      "eyedropperLeft",
+      "eyedropperRight",
+      "temporaryEyedropper",
+    ]);
   });
 
   it("uses concise context-specific groups", () => {

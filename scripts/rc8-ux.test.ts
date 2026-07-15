@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const root = path.resolve("."),
   read = (file: string): string => fs.readFileSync(path.join(root, file), "utf8"),
   canvas = read("apps/desktop/src/renderer/components/PixelCanvas.tsx"),
+  pointerInteraction = read("apps/desktop/src/renderer/editor/pointer-interaction.ts"),
   shell = read("apps/desktop/src/renderer/components/EditorShell.tsx"),
   timeline = read("apps/desktop/src/renderer/components/Timeline.tsx"),
   tooltip = read("apps/desktop/src/renderer/components/Tooltip.tsx"),
@@ -13,10 +14,13 @@ const root = path.resolve("."),
 
 describe("RC8 workspace UX contracts", () => {
   it("uses pointer capture and temporary Space/middle-button panning without changing tools", () => {
-    expect(canvas).toContain("setPointerCapture(event.pointerId)");
+    expect(canvas).toContain('interaction.begin(event.currentTarget, event.pointerId, "pan")');
+    expect(pointerInteraction).toContain("target.setPointerCapture(pointerId)");
+    expect(pointerInteraction).toContain("target.hasPointerCapture(pointerId)");
+    expect(pointerInteraction).toContain("target.releasePointerCapture(pointerId)");
     expect(canvas).toContain('event.button === 1 || (event.button === 0 && spaceRef.current)');
     expect(canvas).toContain('event.code === "Space"');
-    expect(canvas).toContain("entry.session.cancelStroke(strokeRef.current)");
+    expect(canvas).toContain("entry.session.cancelStroke(stroke)");
     expect(canvas).toContain('data-pan-state={panning ? "grabbing" : spacePressed ? "grab" : "idle"}');
     expect(styles).toContain(".pixel-canvas-host.pan-ready .pixel-overlay { cursor: grab; }");
     expect(styles).toContain(".pixel-canvas-host.panning .pixel-overlay { cursor: grabbing; }");

@@ -15,6 +15,11 @@ import {
 } from "@suwol/editor-core";
 import { Viewport } from "@suwol/pixel-renderer";
 import type { FileHandle } from "@suwol/shared";
+import {
+  createPointerInteractionState,
+  type PointerCleanupReason,
+  type PointerInteractionState,
+} from "./pointer-interaction";
 
 export type ToolId =
   | "pencil"
@@ -81,6 +86,7 @@ export interface DocumentViewState {
     selectedCels: Set<CelId>;
     celSelectionAnchor: Readonly<{ layerId: LayerId; frameId: FrameId }> | null;
   };
+  interaction: PointerInteractionState;
 }
 
 export interface WorkspaceDocument {
@@ -95,12 +101,18 @@ export interface WorkspaceDocument {
   recoveryRevision: number | null;
 }
 
+export function effectiveTool(view: Pick<DocumentViewState, "activeTool" | "interaction">): ToolId {
+  const temporary = view.interaction.temporaryToolId;
+  return temporary === null ? view.activeTool : temporary as ToolId;
+}
+
 type Listener = () => void;
 
 export class WorkspaceStore {
   readonly #documents = new Map<DocumentId, WorkspaceDocument>();
   readonly #order: DocumentId[] = [];
   readonly #listeners = new Set<Listener>();
+  readonly #interactionCleanups = new Map<DocumentId, (reason: PointerCleanupReason) => void>();
   #activeId: DocumentId | null = null;
   #clipboard: FloatingSelection | null = null;
   #version = 0;
@@ -139,6 +151,8 @@ export class WorkspaceStore {
   ): WorkspaceDocument {
     const existing = this.#documents.get(session.model.id);
     if (existing !== undefined) {
+      if (this.#activeId !== null && this.#activeId !== existing.id)
+        this.cancelInteraction(this.#activeId, "document-change");
       let kept = false;
       for (let index = 0; index < this.#order.length; index += 1) {
         if (this.#order[index] !== existing.id) continue;
@@ -219,10 +233,13 @@ export class WorkspaceStore {
           selectedCels: new Set(),
           celSelectionAnchor: null,
         },
+        interaction: createPointerInteractionState(),
       },
     };
     this.#documents.set(entry.id, entry);
     this.#order.push(entry.id);
+    if (this.#activeId !== null && this.#activeId !== entry.id)
+      this.cancelInteraction(this.#activeId, "document-change");
     this.#activeId = entry.id;
     this.touch();
     return entry;
@@ -230,6 +247,8 @@ export class WorkspaceStore {
 
   activate(id: DocumentId): boolean {
     if (!this.#documents.has(id)) return false;
+    if (this.#activeId !== null && this.#activeId !== id)
+      this.cancelInteraction(this.#activeId, "document-change");
     for (const entry of this.#documents.values()) entry.view.playback.isPlaying = false;
     this.#activeId = id;
     this.touch();
@@ -247,8 +266,9 @@ export class WorkspaceStore {
   }
   close(id: DocumentId): boolean {
     const entry = this.#documents.get(id);
-    if (entry === undefined || entry.saving || entry.session.transactionActive)
-      return false;
+    if (entry === undefined || entry.saving) return false;
+    this.cancelInteraction(id, "document-change");
+    if (entry.session.transactionActive) return false;
     const index = this.#order.indexOf(id);
     this.#documents.delete(id);
     this.#order.splice(index, 1);
@@ -257,6 +277,21 @@ export class WorkspaceStore {
         this.#order[Math.min(index, this.#order.length - 1)] ?? null;
     this.touch();
     return true;
+  }
+
+  registerInteractionCleanup(
+    id: DocumentId,
+    cleanup: (reason: PointerCleanupReason) => void,
+  ): () => void {
+    this.#interactionCleanups.set(id, cleanup);
+    return () => {
+      if (this.#interactionCleanups.get(id) === cleanup)
+        this.#interactionCleanups.delete(id);
+    };
+  }
+
+  cancelInteraction(id: DocumentId, reason: PointerCleanupReason): void {
+    this.#interactionCleanups.get(id)?.(reason);
   }
   setHandle(
     id: DocumentId,

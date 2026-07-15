@@ -1,5 +1,6 @@
 import { pixelPerfectStrokePoints } from "./stroke";
-import type { IntPoint } from "./types";
+import type { SelectionMask } from "./selection";
+import type { IntPoint, IntRect } from "./types";
 
 export type BrushKind = "square" | "circle" | "custom";
 export type SymmetryMode = "off" | "horizontal" | "vertical" | "both";
@@ -23,6 +24,17 @@ export interface SymmetrySettings {
   readonly mode: SymmetryMode;
   readonly axisX: number;
   readonly axisY: number;
+}
+
+export interface BrushFootprint {
+  readonly points: readonly IntPoint[];
+  readonly bounds: IntRect;
+}
+
+export interface BrushStampOptions {
+  readonly documentBounds?: IntRect;
+  readonly selection?: Pick<SelectionMask, "bounds" | "contains"> | null;
+  readonly symmetry?: SymmetrySettings;
 }
 
 export function pixelPerfectPoints(input: readonly IntPoint[]): IntPoint[] {
@@ -57,12 +69,59 @@ export function brushMask(preset: BrushPreset): Uint8Array {
 }
 
 export function stampBrush(preset: BrushPreset, position: IntPoint): IntPoint[] {
-  const transformed = transformMask(brushMask(preset), preset.width, preset.height, preset.angle, preset.flipX, preset.flipY), result: IntPoint[] = [];
+  const transformed = transformMask(brushMask(preset), preset.width, preset.height, preset.angle, preset.flipX, preset.flipY),
+    anchor = transformPoint(
+      {
+        x: Math.min(preset.width - 1, Math.max(0, Math.round(preset.center.x))),
+        y: Math.min(preset.height - 1, Math.max(0, Math.round(preset.center.y))),
+      },
+      preset.width,
+      preset.height,
+      preset.angle,
+      preset.flipX,
+      preset.flipY,
+    ),
+    result: IntPoint[] = [];
   for (let y = 0; y < transformed.height; y += 1)
     for (let x = 0; x < transformed.width; x += 1)
       if ((transformed.mask[y * transformed.width + x] ?? 0) !== 0)
-        result.push({ x: Math.round(position.x) + x - Math.floor(transformed.width / 2), y: Math.round(position.y) + y - Math.floor(transformed.height / 2) });
+        result.push({ x: Math.round(position.x) + x - anchor.x, y: Math.round(position.y) + y - anchor.y });
   return result;
+}
+
+/** Generates the exact pixels used by both the brush overlay and a committed stamp. */
+export function createBrushFootprint(
+  brush: BrushPreset,
+  documentPoint: IntPoint,
+  options: BrushStampOptions = {},
+): BrushFootprint {
+  const centers = options.symmetry === undefined
+      ? [{ x: Math.round(documentPoint.x), y: Math.round(documentPoint.y) }]
+      : symmetryPoints(documentPoint, options.symmetry),
+    points = deduplicatePoints(centers.flatMap((center) => stampBrush(brush, center))).filter((point) => {
+      const bounds = options.documentBounds;
+      if (bounds !== undefined && (
+        point.x < bounds.x || point.y < bounds.y ||
+        point.x >= bounds.x + bounds.width || point.y >= bounds.y + bounds.height
+      )) return false;
+      const selection = options.selection;
+      return selection?.bounds === null || selection === undefined || selection === null
+        ? true
+        : selection.contains(point.x, point.y);
+    });
+  if (points.length === 0)
+    return { points, bounds: { x: Math.round(documentPoint.x), y: Math.round(documentPoint.y), width: 0, height: 0 } };
+  let minX = points[0]?.x ?? 0,
+    minY = points[0]?.y ?? 0,
+    maxX = minX,
+    maxY = minY;
+  for (const point of points.slice(1)) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  return { points, bounds: { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 } };
 }
 
 export function spacedBrushStroke(preset: BrushPreset, points: readonly IntPoint[]): IntPoint[] {
@@ -102,6 +161,18 @@ export function transformMask(mask: Uint8Array, width: number, height: number, a
     result[ty * rotatedWidth + tx] = mask[y * width + x] ?? 0;
   }
   return { mask: result, width: rotatedWidth, height: rotatedHeight };
+}
+
+function transformPoint(point: IntPoint, width: number, height: number, angle: 0 | 90 | 180 | 270, flipX: boolean, flipY: boolean): IntPoint {
+  const rotatedWidth = angle === 90 || angle === 270 ? height : width,
+    rotatedHeight = angle === 90 || angle === 270 ? width : height;
+  let x = point.x, y = point.y;
+  if (angle === 90) { x = height - 1 - point.y; y = point.x; }
+  else if (angle === 180) { x = width - 1 - point.x; y = height - 1 - point.y; }
+  else if (angle === 270) { x = point.y; y = width - 1 - point.x; }
+  if (flipX) x = rotatedWidth - 1 - x;
+  if (flipY) y = rotatedHeight - 1 - y;
+  return { x, y };
 }
 
 export function packMask(mask: Uint8Array): string {

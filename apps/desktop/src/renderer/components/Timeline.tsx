@@ -114,6 +114,7 @@ export function Timeline({
         playback.direction = advanced.direction;
         playback.isPlaying = advanced.isPlaying;
         if (frameId !== undefined && frameId !== entry.view.activeFrameId) {
+          workspace.cancelInteraction(entry.id, "frame-change");
           entry.view.activeFrameId = frameId;
           entry.session.setActiveFrame(frameId);
           workspace.invalidateCanvas(entry.id);
@@ -126,6 +127,7 @@ export function Timeline({
   }, [entry, workspace]);
 
   function selectFrame(frameId: FrameId, event?: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) {
+    workspace.cancelInteraction(entry.id, "frame-change");
     entry.view.playback.isPlaying = false;
     entry.view.floating = null;
     const mode = event?.shiftKey
@@ -346,6 +348,7 @@ export function Timeline({
                     className={`${entry.view.activeFrameId === frameId && entry.view.activeLayerId === layerId ? "active" : ""} ${cel === null ? "empty" : "filled"} ${cel !== null && entry.view.timeline.selectedCels.has(cel.id) ? "selected" : ""}`}
                     aria-label={`${entry.session.model.layers[layerId]?.name}, ${t("frame.title")} ${index + 1}, ${cel === null ? t("cel.empty") : linked ? t("cel.linked") : t("cel.title")}`}
                     onClick={(event) => {
+                      workspace.cancelInteraction(entry.id, "layer-change");
                       entry.view.activeLayerId = layerId;
                       entry.view.timeline.selectedCelId = cel?.id ?? null;
                       const anchor = entry.view.timeline.celSelectionAnchor;
@@ -372,6 +375,7 @@ export function Timeline({
                     }}
                     onContextMenu={(event) => {
                       event.preventDefault();
+                      workspace.cancelInteraction(entry.id, "layer-change");
                       entry.view.activeLayerId = layerId;
                       entry.view.timeline.selectedCelId = cel?.id ?? null;
                       selectFrame(frameId);

@@ -14,12 +14,17 @@ export type ToolOptionId =
   | "selectionMode"
   | "moveTarget"
   | "tile"
-  | "tileTransform";
+  | "tileTransform"
+  | "eyedropperLeft"
+  | "eyedropperRight"
+  | "temporaryEyedropper";
 
 export function toolOptionIds(tool: ToolId): readonly ToolOptionId[] {
   if (tool === "pencil")
     return ["foreground", "background", "size", "opacity", "preset", "pixelPerfect", "symmetry"];
   if (tool === "eraser") return ["size", "opacity", "preset"];
+  if (tool === "eyedropper")
+    return ["eyedropperLeft", "eyedropperRight", "temporaryEyedropper"];
   if (tool === "fill") return ["foreground", "tolerance", "selectionLimit"];
   if (tool === "line" || tool === "rectangle" || tool === "ellipse")
     return ["foreground", "size", "opacity", "fillMode", "symmetry"];

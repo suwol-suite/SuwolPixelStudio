@@ -44,6 +44,8 @@ export interface StrokeTransformOptions {
   readonly pixelPerfect?: boolean;
   readonly symmetry?: Readonly<{ mode: "off" | "horizontal" | "vertical" | "both"; axisX: number; axisY: number }>;
   readonly stampOffsets?: readonly IntPoint[];
+  /** Produces the final clipped pixels for each stroke center. */
+  readonly footprint?: (point: IntPoint) => readonly IntPoint[];
 }
 
 export function pixelPerfectStrokePoints(input: readonly IntPoint[]): IntPoint[] {
@@ -85,7 +87,7 @@ export class StrokeTransaction {
 
   addPoint(point: IntPoint): DirtyRegion | null {
     this.#assertOpen();
-    if (this.options.pixelPerfect === true || this.options.symmetry?.mode !== undefined && this.options.symmetry.mode !== "off" || this.options.stampOffsets !== undefined)
+    if (this.options.pixelPerfect === true || this.options.symmetry?.mode !== undefined && this.options.symmetry.mode !== "off" || this.options.stampOffsets !== undefined || this.options.footprint !== undefined)
       return this.#addTransformed(point);
     const points =
       this.#lastPoint === null
@@ -111,9 +113,13 @@ export class StrokeTransaction {
     const path = this.options.pixelPerfect === true
       ? pixelPerfectStrokePoints(this.#rawPoints)
       : this.#rawPoints.flatMap((current, index, all) => index === 0 ? [current] : bresenhamLine(all[index - 1] ?? current, current).slice(1));
-    const symmetry = this.options.symmetry;
-    const symmetric = symmetry === undefined || symmetry.mode === "off" ? path : path.flatMap((current) => symmetryCopies(current, symmetry)),
-      points = this.options.stampOffsets === undefined ? symmetric : symmetric.flatMap((current) => this.options.stampOffsets?.map((offset) => ({ x: current.x + offset.x, y: current.y + offset.y })) ?? []);
+    const symmetry = this.options.symmetry,
+      symmetric = symmetry === undefined || symmetry.mode === "off" ? path : path.flatMap((current) => symmetryCopies(current, symmetry)),
+      points = this.options.footprint !== undefined
+        ? path.flatMap((current) => this.options.footprint?.(current) ?? [])
+        : this.options.stampOffsets === undefined
+          ? symmetric
+          : symmetric.flatMap((current) => this.options.stampOffsets?.map((offset) => ({ x: current.x + offset.x, y: current.y + offset.y })) ?? []);
     let changed: DirtyRegion | null = null;
     for (const current of deduplicate(points)) changed = unionRect(changed, this.#apply(current));
     this.#lastPoint = rounded;
